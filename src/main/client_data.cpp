@@ -10,6 +10,7 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/query_profiler.hpp"
+#include "duckdb/main/rl_feature_tracker.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 
 namespace duckdb {
@@ -177,6 +178,7 @@ ClientData::ClientData(ClientContext &context) : catalog_search_path(make_uniq<C
 	auto &db = DatabaseInstance::GetDatabase(context);
 
 	profiler = make_shared_ptr<QueryProfiler>(context);
+	rl_feature_tracker = make_uniq<RLFeatureTracker>(context);
 	temporary_objects = make_shared_ptr<AttachedDatabase>(db, AttachedDatabaseType::TEMP_DATABASE);
 	temporary_objects->oid = DatabaseManager::Get(db).NextOid();
 	random_engine = make_uniq<RandomEngine>();

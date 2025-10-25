@@ -45,6 +45,8 @@ add_library_unity(
   relation.cpp
   query_profiler.cpp
   query_result.cpp
+  rl_feature_tracker.cpp
+  rl_model_interface.cpp
   stream_query_result.cpp
   valid_checker.cpp)
 set(ALL_OBJECT_FILES

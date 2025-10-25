@@ -13,6 +13,7 @@
 #include "duckdb/main/client_config.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/client_data.hpp"
+#include "duckdb/main/rl_feature_tracker.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/storage/buffer/buffer_pool.hpp"
 #include "yyjson.hpp"
@@ -171,6 +172,7 @@ bool QueryProfiler::OperatorRequiresProfiling(const PhysicalOperatorType op_type
 }
 
 void QueryProfiler::Finalize(ProfilingNode &node) {
+	// First recurse to children
 	for (idx_t i = 0; i < node.GetChildCount(); i++) {
 		auto child = node.GetChild(i);
 		Finalize(*child);
@@ -183,6 +185,39 @@ void QueryProfiler::Finalize(ProfilingNode &node) {
 			auto &child_info = child->GetProfilingInfo();
 			auto value = child_info.metrics[MetricsType::OPERATOR_CARDINALITY].GetValue<idx_t>();
 			info.MetricSum(MetricsType::OPERATOR_CARDINALITY, value);
+		}
+	}
+
+	// FEATURE LOGGING: Log aggregated actual cardinality vs estimated
+	auto &info = node.GetProfilingInfo();
+	if (info.Enabled(info.expanded_settings, MetricsType::OPERATOR_CARDINALITY)) {
+		auto actual_cardinality = info.GetMetricValue<idx_t>(MetricsType::OPERATOR_CARDINALITY);
+		auto operator_name = info.GetMetricValue<string>(MetricsType::OPERATOR_NAME);
+
+		// Find the physical operator for this node to get estimated cardinality
+		idx_t estimated_cardinality = 0;
+		for (auto &tree_entry : tree_map) {
+			if (&tree_entry.second.get() == &node) {
+				auto est_it = operator_estimated_cardinalities.find(tree_entry.first.get());
+				if (est_it != operator_estimated_cardinalities.end()) {
+					estimated_cardinality = est_it->second;
+				}
+				break;
+			}
+		}
+
+		if (actual_cardinality > 0) {
+			// Printer::Print("\n[RL FEATURE] *** ACTUAL CARDINALITY *** Operator: " + operator_name +
+			//                " | Actual Output: " + std::to_string(actual_cardinality) +
+			//                " | Estimated: " + std::to_string(estimated_cardinality));
+
+			if (estimated_cardinality > 0) {
+				double error = static_cast<double>(actual_cardinality) / static_cast<double>(estimated_cardinality);
+				if (error < 1.0) {
+					error = 1.0 / error; // Q-error is always >= 1
+				}
+				// Printer::Print("[RL FEATURE] *** Q-ERROR *** " + std::to_string(error));
+			}
 		}
 	}
 }
@@ -227,6 +262,14 @@ Value GetCumulativeOptimizers(ProfilingNode &node) {
 
 void QueryProfiler::EndQuery() {
 	unique_lock<std::mutex> guard(lock);
+
+	// Finalize RL feature tracker (works independently of profiling)
+	auto &tracker = ClientData::Get(context).rl_feature_tracker;
+	if (tracker) {
+		tracker->Finalize();
+		tracker->Reset();
+	}
+
 	if (!IsEnabled() || !running) {
 		return;
 	}
@@ -480,13 +523,21 @@ void OperatorProfiler::StartOperator(optional_ptr<const PhysicalOperator> phys_o
 	active_operator = phys_op;
 
 	if (!settings.empty()) {
+		// Store estimated cardinality on first call (must be before any GetOperatorInfo calls)
+		bool is_first_call = !OperatorInfoIsInitialized(*active_operator);
+
 		if (ProfilingInfo::Enabled(settings, MetricsType::EXTRA_INFO)) {
-			if (!OperatorInfoIsInitialized(*active_operator)) {
+			if (is_first_call) {
 				// first time calling into this operator - fetch the info
 				auto &info = GetOperatorInfo(*active_operator);
 				auto params = active_operator->ParamsToString();
 				info.extra_info = params;
+				info.estimated_cardinality = active_operator->estimated_cardinality;
 			}
+		} else if (is_first_call) {
+			// Still need to store estimated cardinality even if EXTRA_INFO is not enabled
+			auto &info = GetOperatorInfo(*active_operator);
+			info.estimated_cardinality = active_operator->estimated_cardinality;
 		}
 
 		// Start the timing of the current operator.
@@ -599,6 +650,10 @@ void QueryProfiler::Flush(OperatorProfiler &profiler) {
 		}
 		if (ProfilingInfo::Enabled(profiler.settings, MetricsType::OPERATOR_CARDINALITY)) {
 			info.MetricSum<idx_t>(MetricsType::OPERATOR_CARDINALITY, node.second.elements_returned);
+			// Store estimated cardinality for aggregated logging in Finalize()
+			if (node.second.estimated_cardinality > 0) {
+				operator_estimated_cardinalities[op] = node.second.estimated_cardinality;
+			}
 		}
 		if (ProfilingInfo::Enabled(profiler.settings, MetricsType::OPERATOR_ROWS_SCANNED)) {
 			if (op.type == PhysicalOperatorType::TABLE_SCAN) {

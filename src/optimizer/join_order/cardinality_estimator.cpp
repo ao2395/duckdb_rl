@@ -5,6 +5,7 @@
 #include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/optimizer/join_order/join_node.hpp"
 #include "duckdb/optimizer/join_order/query_graph_manager.hpp"
+#include "duckdb/optimizer/rl_feature_collector.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/operator/logical_comparison_join.hpp"
 #include "duckdb/storage/data_table.hpp"
@@ -216,6 +217,24 @@ JoinRelationSet &CardinalityEstimator::UpdateNumeratorRelations(Subgraph2Denomin
 double CardinalityEstimator::CalculateUpdatedDenom(Subgraph2Denominator left, Subgraph2Denominator right,
                                                    FilterInfoWithTotalDomains &filter) {
 	double new_denom = left.denom * right.denom;
+
+	// Collect join features for RL model
+	JoinFeatures rl_join_features;
+	rl_join_features.join_type = EnumUtil::ToString(filter.filter_info->join_type);
+	rl_join_features.left_relation_card = left.relations->count;
+	rl_join_features.right_relation_card = right.relations->count;
+	rl_join_features.left_denominator = left.denom;
+	rl_join_features.right_denominator = right.denom;
+
+	// Get the relation set for this join (use reference since JoinRelationSet can't be copied)
+	auto &combined_relations = set_manager.Union(*left.relations, *right.relations);
+	rl_join_features.join_relation_set = combined_relations.ToString();
+	rl_join_features.num_relations = combined_relations.count;
+
+	// Store TDOM values
+	rl_join_features.tdom_from_hll = filter.has_tdom_hll;
+	rl_join_features.tdom_value = filter.has_tdom_hll ? filter.tdom_hll : filter.tdom_no_hll;
+
 	switch (filter.filter_info->join_type) {
 	case JoinType::INNER: {
 		// Collect comparison types
@@ -225,12 +244,19 @@ double CardinalityEstimator::CalculateUpdatedDenom(Subgraph2Denominator left, Su
 				comparison_type = expr.GetExpressionType();
 			}
 		});
+
+		// Store comparison type
+		rl_join_features.comparison_type = ExpressionTypeToString(comparison_type);
+
 		if (comparison_type == ExpressionType::INVALID) {
 			new_denom *=
 			    filter.has_tdom_hll ? static_cast<double>(filter.tdom_hll) : static_cast<double>(filter.tdom_no_hll);
 			// no comparison is taking place, so the denominator is just the product of the left and right
+			// Save the join features before returning
+			RLFeatureCollector::Get().AddJoinFeaturesByRelationSet(rl_join_features.join_relation_set, rl_join_features);
 			return new_denom;
 		}
+
 		// extra_ratio helps represents how many tuples will be filtered out if the comparison evaluates to
 		// false. set to 1 to assume cross product.
 		double extra_ratio = 1;
@@ -255,7 +281,11 @@ double CardinalityEstimator::CalculateUpdatedDenom(Subgraph2Denominator left, Su
 		default:
 			break;
 		}
+		rl_join_features.extra_ratio = extra_ratio;
 		new_denom *= extra_ratio;
+
+		// Save the join features
+		RLFeatureCollector::Get().AddJoinFeaturesByRelationSet(rl_join_features.join_relation_set, rl_join_features);
 		return new_denom;
 	}
 	case JoinType::SEMI:
@@ -263,13 +293,16 @@ double CardinalityEstimator::CalculateUpdatedDenom(Subgraph2Denominator left, Su
 		if (JoinRelationSet::IsSubset(*left.relations, *filter.filter_info->left_set) &&
 		    JoinRelationSet::IsSubset(*right.relations, *filter.filter_info->right_set)) {
 			new_denom = left.denom * CardinalityEstimator::DEFAULT_SEMI_ANTI_SELECTIVITY;
-			return new_denom;
+		} else {
+			new_denom = right.denom * CardinalityEstimator::DEFAULT_SEMI_ANTI_SELECTIVITY;
 		}
-		new_denom = right.denom * CardinalityEstimator::DEFAULT_SEMI_ANTI_SELECTIVITY;
+		// Save the join features
+		RLFeatureCollector::Get().AddJoinFeaturesByRelationSet(rl_join_features.join_relation_set, rl_join_features);
 		return new_denom;
 	}
 	default:
-		// cross product
+		// cross product - Save the join features
+		RLFeatureCollector::Get().AddJoinFeaturesByRelationSet(rl_join_features.join_relation_set, rl_join_features);
 		return new_denom;
 	}
 }
@@ -398,11 +431,43 @@ double CardinalityEstimator::EstimateCardinalityWithSet(JoinRelationSet &new_set
 		return relation_set_2_cardinality[new_set.ToString()].cardinality_before_filters;
 	}
 
+	// FEATURE LOGGING: Start of cardinality estimation
+	// Printer::Print("\n[RL FEATURE] ===== CARDINALITY ESTIMATION START =====");
+	// Printer::Print("[RL FEATURE] Join Relation Set: " + new_set.ToString());
+	// Printer::Print("[RL FEATURE] Number of relations in join: " + to_string(new_set.count));
+
 	// can happen if a table has cardinality 0, or a tdom is set to 0
 	auto denom = GetDenominator(new_set);
 	auto numerator = GetNumerator(denom.numerator_relations);
 
+	// FEATURE LOGGING: Numerator and Denominator
+	// Printer::Print("[RL FEATURE] Numerator (product of cardinalities): " + to_string(numerator));
+	// Printer::Print("[RL FEATURE] Denominator (TDOM-based): " + to_string(denom.denominator));
+
 	double result = numerator / denom.denominator;
+
+	// Update the join features with final numerator, denominator, and estimated cardinality
+	// The detailed join features (TDOM, join type, etc.) were already collected in CalculateUpdatedDenom()
+	// Look up by relation set first (most reliable)
+	auto existing_features = RLFeatureCollector::Get().GetJoinFeaturesByRelationSet(new_set.ToString());
+	if (!existing_features) {
+		// If no detailed features exist yet, create a basic entry
+		JoinFeatures rl_join_features;
+		rl_join_features.join_relation_set = new_set.ToString();
+		rl_join_features.num_relations = new_set.count;
+		rl_join_features.numerator = numerator;
+		rl_join_features.denominator = denom.denominator;
+		rl_join_features.estimated_cardinality = result;
+		RLFeatureCollector::Get().AddJoinFeaturesByRelationSet(new_set.ToString(), rl_join_features);
+	} else {
+		// Update existing features with final values
+		existing_features->numerator = numerator;
+		existing_features->denominator = denom.denominator;
+		existing_features->estimated_cardinality = result;
+		// Now also store by estimated cardinality for easy lookup later
+		RLFeatureCollector::Get().AddJoinFeaturesByRelationSet(new_set.ToString(), *existing_features);
+	}
+
 	auto new_entry = CardinalityHelper(result);
 	relation_set_2_cardinality[new_set.ToString()] = new_entry;
 	return result;

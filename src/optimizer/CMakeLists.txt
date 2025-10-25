@@ -30,6 +30,7 @@ add_library_unity(
   late_materialization.cpp
   optimizer.cpp
   regex_range_filter.cpp
+  rl_feature_collector.cpp
   remove_duplicate_groups.cpp
   remove_unused_columns.cpp
   statistics_propagator.cpp

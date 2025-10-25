@@ -8,6 +8,7 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/operator/logical_filter.hpp"
 #include "duckdb/storage/statistics/base_statistics.hpp"
+#include "duckdb/common/printer.hpp"
 
 namespace duckdb {
 
@@ -48,40 +49,62 @@ void StatisticsPropagator::SetStatisticsNotNull(ColumnBinding binding) {
 
 void StatisticsPropagator::UpdateFilterStatistics(BaseStatistics &stats, ExpressionType comparison_type,
                                                   const Value &constant) {
+	// FEATURE LOGGING: Filter statistics update
+	// Printer::Print("\n[RL FEATURE] ===== FILTER STATISTICS UPDATE =====");
+	// Printer::Print("[RL FEATURE] Comparison Type: " + ExpressionTypeToString(comparison_type));
+	// Printer::Print("[RL FEATURE] Constant Value: " + constant.ToString());
+	// Printer::Print("[RL FEATURE] Column Type: " + stats.GetType().ToString());
+
 	// regular comparisons removes all null values
 	if (!IsCompareDistinct(comparison_type)) {
 		stats.Set(StatsInfo::CANNOT_HAVE_NULL_VALUES);
+		// Printer::Print("[RL FEATURE] Setting column as NOT NULL");
 	}
 	if (!stats.GetType().IsNumeric()) {
 		// don't handle non-numeric columns here (yet)
+		// Printer::Print("[RL FEATURE] Non-numeric column - no min/max update");
+		// Printer::Print("[RL FEATURE] ===== END FILTER STATISTICS UPDATE =====\n");
 		return;
 	}
 	if (!NumericStats::HasMinMax(stats)) {
 		// no stats available: skip this
+		// Printer::Print("[RL FEATURE] No min/max statistics available");
+		// Printer::Print("[RL FEATURE] ===== END FILTER STATISTICS UPDATE =====\n");
 		return;
 	}
+
+	auto old_min = NumericStats::Min(stats);
+	auto old_max = NumericStats::Max(stats);
+	// Printer::Print("[RL FEATURE] Current Min: " + old_min.ToString());
+	// Printer::Print("[RL FEATURE] Current Max: " + old_max.ToString());
+
 	switch (comparison_type) {
 	case ExpressionType::COMPARE_LESSTHAN:
 	case ExpressionType::COMPARE_LESSTHANOREQUALTO:
 		// X < constant OR X <= constant
 		// max becomes the constant
 		NumericStats::SetMax(stats, constant);
+		// Printer::Print("[RL FEATURE] Updated Max to: " + constant.ToString());
 		break;
 	case ExpressionType::COMPARE_GREATERTHAN:
 	case ExpressionType::COMPARE_GREATERTHANOREQUALTO:
 		// X > constant OR X >= constant
 		// min becomes the constant
 		NumericStats::SetMin(stats, constant);
+		// Printer::Print("[RL FEATURE] Updated Min to: " + constant.ToString());
 		break;
 	case ExpressionType::COMPARE_EQUAL:
 		// X = constant
 		// both min and max become the constant
 		NumericStats::SetMin(stats, constant);
 		NumericStats::SetMax(stats, constant);
+		// Printer::Print("[RL FEATURE] Updated both Min and Max to: " + constant.ToString());
 		break;
 	default:
+		// Printer::Print("[RL FEATURE] No min/max update for this comparison type");
 		break;
 	}
+	// Printer::Print("[RL FEATURE] ===== END FILTER STATISTICS UPDATE =====\n");
 }
 
 void StatisticsPropagator::UpdateFilterStatistics(BaseStatistics &lstats, BaseStatistics &rstats,

@@ -23,6 +23,7 @@ class QueryProfiler;
 class PreparedStatementData;
 class RandomEngine;
 class BufferManager;
+class RLFeatureTracker;
 
 struct ClientData {
 public:
@@ -32,6 +33,8 @@ public:
 public:
 	//! The query profiler of this client.
 	shared_ptr<QueryProfiler> profiler;
+	//! The RL feature tracker for cardinality estimation
+	unique_ptr<RLFeatureTracker> rl_feature_tracker;
 
 	//! The set of temporary objects belonging to this client.
 	shared_ptr<AttachedDatabase> temporary_objects;

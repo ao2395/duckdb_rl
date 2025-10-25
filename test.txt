@@ -1,0 +1,247 @@
+RL FEATURE] ===== TABLE SCAN STATS =====
+[RL FEATURE] Table Name: customer
+[RL FEATURE] Base Table Cardinality: 150000
+[RL FEATURE] Column: c_custkey | Distinct Count (HLL): 146042
+[RL FEATURE] Column: c_acctbal | Distinct Count (HLL): 140574
+[RL FEATURE] Column: c_name | Distinct Count (HLL): 149168
+[RL FEATURE] Number of table filters: 1
+[RL FEATURE] --- Filter Inspection on column 5 ---
+[RL FEATURE] Filter Type: CONSTANT_COMPARISON
+[RL FEATURE] Comparison Type: GREATERTHAN
+[RL FEATURE] Non-equality comparison - no selectivity applied
+[RL FEATURE] Filter on column 5 | Cardinality after filter: 150000
+[RL FEATURE] Using DEFAULT_SELECTIVITY: 0.200000
+[RL FEATURE] Cardinality after default selectivity: 30000
+[RL FEATURE] Final Cardinality (after filters): 30000
+[RL FEATURE] Filter Selectivity Ratio: 0.200000
+[RL FEATURE] ===== END TABLE SCAN STATS =====
+
+
+[RL FEATURE] ===== TABLE SCAN STATS =====
+[RL FEATURE] Table Name: orders
+[RL FEATURE] Base Table Cardinality: 1500000
+[RL FEATURE] Column: o_custkey | Distinct Count (HLL): 107255
+[RL FEATURE] Column: o_orderdate | Distinct Count (HLL): 2325
+[RL FEATURE] Column: o_totalprice | Distinct Count (HLL): 1491344
+[RL FEATURE] Number of table filters: 1
+[RL FEATURE] --- Filter Inspection on column 4 ---
+[RL FEATURE] Filter Type: CONJUNCTION_AND
+[RL FEATURE] Number of AND child filters: 2
+[RL FEATURE] --- Filter Inspection on column 4 ---
+[RL FEATURE] Filter Type: CONSTANT_COMPARISON
+[RL FEATURE] Comparison Type: GREATERTHANOREQUALTO
+[RL FEATURE] Non-equality comparison - no selectivity applied
+[RL FEATURE] --- Filter Inspection on column 4 ---
+[RL FEATURE] Filter Type: CONSTANT_COMPARISON
+[RL FEATURE] Comparison Type: LESSTHAN
+[RL FEATURE] Non-equality comparison - no selectivity applied
+[RL FEATURE] Filter on column 4 | Cardinality after filter: 1500000
+[RL FEATURE] Using DEFAULT_SELECTIVITY: 0.200000
+[RL FEATURE] Cardinality after default selectivity: 300000
+[RL FEATURE] Final Cardinality (after filters): 300000
+[RL FEATURE] Filter Selectivity Ratio: 0.200000
+[RL FEATURE] ===== END TABLE SCAN STATS =====
+
+
+[RL FEATURE] ===== CARDINALITY ESTIMATION START =====
+[RL FEATURE] Join Relation Set: [0, 1]
+[RL FEATURE] Number of relations in join: 2
+[RL FEATURE] Join Type: INNER
+[RL FEATURE] Left Relation Cardinality: 2
+[RL FEATURE] Right Relation Cardinality: 1
+[RL FEATURE] Left Denominator: 1.000000
+[RL FEATURE] Right Denominator: 1.000000
+[RL FEATURE] Comparison Type: EQUAL
+[RL FEATURE] TDOM from HLL: true
+[RL FEATURE] TDOM value: 146042
+[RL FEATURE] Equality Join - Extra Ratio: 146042.000000
+[RL FEATURE] Numerator (product of cardinalities): 9000000000.000000
+[RL FEATURE] Denominator (TDOM-based): 146042.000000
+[RL FEATURE] Estimated Cardinality: 61626.107558
+[RL FEATURE] ===== CARDINALITY ESTIMATION END =====
+
+
+[RL FEATURE] ===== FILTER STATISTICS UPDATE =====
+[RL FEATURE] Comparison Type: GREATERTHANOREQUALTO
+[RL FEATURE] Constant Value: 1995-01-01
+[RL FEATURE] Column Type: DATE
+[RL FEATURE] Setting column as NOT NULL
+[RL FEATURE] Non-numeric column - no min/max update
+[RL FEATURE] ===== END FILTER STATISTICS UPDATE =====
+
+
+[RL FEATURE] ===== FILTER STATISTICS UPDATE =====
+[RL FEATURE] Comparison Type: LESSTHAN
+[RL FEATURE] Constant Value: 1996-01-01
+[RL FEATURE] Column Type: DATE
+[RL FEATURE] Setting column as NOT NULL
+[RL FEATURE] Non-numeric column - no min/max update
+[RL FEATURE] ===== END FILTER STATISTICS UPDATE =====
+
+
+[RL FEATURE] ===== FILTER STATISTICS UPDATE =====
+[RL FEATURE] Comparison Type: GREATERTHAN
+[RL FEATURE] Constant Value: 5000.00
+[RL FEATURE] Column Type: DECIMAL(15,2)
+[RL FEATURE] Setting column as NOT NULL
+[RL FEATURE] Current Min: -999.99
+[RL FEATURE] Current Max: 9999.99
+[RL FEATURE] Updated Min to: 5000.00
+[RL FEATURE] ===== END FILTER STATISTICS UPDATE =====
+
+
+[RL FEATURE] ===== AGGREGATE STATISTICS =====
+[RL FEATURE] Number of GROUP BY columns: 1
+[RL FEATURE] Number of aggregate functions: 2
+[RL FEATURE] Number of grouping sets: 1
+[RL FEATURE] ===== END AGGREGATE STATISTICS =====
+
+
+[RL FEATURE] *** ACTUAL CARDINALITY *** Operator: TOP_N | Actual Output: 10 | Estimated: 10
+[RL FEATURE] *** Q-ERROR *** 1.000000
+
+[RL FEATURE] *** ACTUAL CARDINALITY *** Operator: EXPLAIN_ANALYZE | Actual Output: 1 | Estimated: 3
+[RL FEATURE] *** Q-ERROR *** 3.000000
+
+[RL FEATURE] *** ACTUAL CARDINALITY *** Operator: PROJECTION | Actual Output: 103202 | Estimated: 61626
+[RL FEATURE] *** Q-ERROR *** 1.674650
+
+[RL FEATURE] *** ACTUAL CARDINALITY *** Operator: HASH_JOIN | Actual Output: 103202 | Estimated: 61626
+[RL FEATURE] *** Q-ERROR *** 1.674650
+
+[RL FEATURE] *** ACTUAL CARDINALITY *** Operator: HASH_GROUP_BY | Actual Output: 39128 | Estimated: 50482
+[RL FEATURE] *** Q-ERROR *** 1.290176
+
+[RL FEATURE] *** ACTUAL CARDINALITY *** Operator: SEQ_SCAN  | Actual Output: 228636 | Estimated: 300000
+[RL FEATURE] *** Q-ERROR *** 1.312129
+
+[RL FEATURE] *** ACTUAL CARDINALITY *** Operator: FILTER | Actual Output: 67989 | Estimated: 30000
+[RL FEATURE] *** Q-ERROR *** 2.266300
+
+[RL FEATURE] *** ACTUAL CARDINALITY *** Operator: SEQ_SCAN  | Actual Output: 67989 | Estimated: 30000
+[RL FEATURE] *** Q-ERROR *** 2.266300
+
+[RL FEATURE] *** ACTUAL CARDINALITY *** Operator: SEQ_SCAN  | Actual Output: 228636 | Estimated: 300000
+[RL FEATURE] *** Q-ERROR *** 1.312129
+
+[RL FEATURE] *** ACTUAL CARDINALITY *** Operator: SEQ_SCAN  | Actual Output: 67989 | Estimated: 30000
+[RL FEATURE] *** Q-ERROR *** 2.266300
+
+[RL FEATURE] *** ACTUAL CARDINALITY *** Operator: FILTER | Actual Output: 67989 | Estimated: 30000
+[RL FEATURE] *** Q-ERROR *** 2.266300
+
+[RL FEATURE] *** ACTUAL CARDINALITY *** Operator: HASH_JOIN | Actual Output: 103202 | Estimated: 61626
+[RL FEATURE] *** Q-ERROR *** 1.674650
+
+[RL FEATURE] *** ACTUAL CARDINALITY *** Operator: PROJECTION | Actual Output: 103202 | Estimated: 61626
+[RL FEATURE] *** Q-ERROR *** 1.674650
+
+[RL FEATURE] *** ACTUAL CARDINALITY *** Operator: HASH_GROUP_BY | Actual Output: 39128 | Estimated: 50482
+[RL FEATURE] *** Q-ERROR *** 1.290176
+
+[RL FEATURE] *** ACTUAL CARDINALITY *** Operator: TOP_N | Actual Output: 10 | Estimated: 10
+[RL FEATURE] *** Q-ERROR *** 1.000000
+
+[RL FEATURE] *** ACTUAL CARDINALITY *** Operator: EXPLAIN_ANALYZE | Actual Output: 1 | Estimated: 3
+[RL FEATURE] *** Q-ERROR *** 3.000000
+┌─────────────────────────────────────┐
+│┌───────────────────────────────────┐│
+││    Query Profiling Information    ││
+│└───────────────────────────────────┘│
+└─────────────────────────────────────┘
+explain analyze SELECT      c.c_name,     COUNT(*) as order_count,     SUM(o.o_totalprice) as total_price FROM      customer c     JOIN orders o ON c.c_custkey = o.o_custkey WHERE      c.c_acctbal > 5000     AND o.o_orderdate >= DATE '1995-01-01'     AND o.o_orderdate < DATE '1996-01-01' GROUP BY      c.c_name ORDER BY      total_price DESC LIMIT 10;
+┌────────────────────────────────────────────────┐
+│┌──────────────────────────────────────────────┐│
+││              Total Time: 0.0225s             ││
+│└──────────────────────────────────────────────┘│
+└────────────────────────────────────────────────┘
+┌───────────────────────────┐
+│           QUERY           │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│      EXPLAIN_ANALYZE      │
+│    ────────────────────   │
+│           0 rows          │
+│          (0.00s)          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│           TOP_N           │
+│    ────────────────────   │
+│          Top: 10          │
+│                           │
+│         Order By:         │
+│  sum(o.o_totalprice) DESC │
+│                           │
+│          10 rows          │
+│          (0.00s)          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│       HASH_GROUP_BY       │
+│    ────────────────────   │
+│         Groups: #0        │
+│                           │
+│        Aggregates:        │
+│        count_star()       │
+│          sum(#1)          │
+│                           │
+│        39,128 rows        │
+│          (0.08s)          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         PROJECTION        │
+│    ────────────────────   │
+│           c_name          │
+│        o_totalprice       │
+│                           │
+│        103,202 rows       │
+│          (0.00s)          │
+└─────────────┬─────────────┘
+┌─────────────┴─────────────┐
+│         HASH_JOIN         │
+│    ────────────────────   │
+│      Join Type: INNER     │
+│                           │
+│        Conditions:        ├──────────────┐
+│   o_custkey = c_custkey   │              │
+│                           │              │
+│        103,202 rows       │              │
+│          (0.01s)          │              │
+└─────────────┬─────────────┘              │
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+│         TABLE_SCAN        ││           FILTER          │
+│    ────────────────────   ││    ────────────────────   │
+│       Table: orders       ││   (c_custkey <= 149999)   │
+│   Type: Sequential Scan   ││                           │
+│                           ││                           │
+│        Projections:       ││                           │
+│         o_custkey         ││                           │
+│        o_totalprice       ││                           │
+│                           ││                           │
+│          Filters:         ││                           │
+│ o_orderdate>='1995-01-01':││                           │
+│   :DATE AND o_orderdate<  ││                           │
+│     '1996-01-01'::DATE    ││                           │
+│                           ││                           │
+│        228,636 rows       ││        67,989 rows        │
+│          (0.02s)          ││          (0.00s)          │
+└───────────────────────────┘└─────────────┬─────────────┘
+                             ┌─────────────┴─────────────┐
+                             │         TABLE_SCAN        │
+                             │    ────────────────────   │
+                             │      Table: customer      │
+                             │   Type: Sequential Scan   │
+                             │                           │
+                             │        Projections:       │
+                             │         c_custkey         │
+                             │           c_name          │
+                             │                           │
+                             │          Filters:         │
+                             │     c_acctbal>5000.00     │
+                             │                           │
+                             │        67,989 rows        │
+                             │          (0.00s)          │
+                             └───────────────────────────┘
+D 
+D 
+abdullah@Abdullahs-MacBook-Pro duckdb_rl % 
+abdullah@Abdullahs-MacBook-Pro duckdb_rl % 

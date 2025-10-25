@@ -2,6 +2,9 @@
 
 #include "duckdb/common/limits.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/main/client_data.hpp"
+#include "duckdb/main/rl_feature_tracker.hpp"
+#include "duckdb/common/printer.hpp"
 
 #ifdef DUCKDB_DEBUG_ASYNC_SINK_SOURCE
 #include <chrono>
@@ -548,10 +551,22 @@ void PipelineExecutor::StartOperator(PhysicalOperator &op) {
 		throw InterruptException();
 	}
 	context.thread.profiler.StartOperator(&op);
+
+	// Track operator start for RL features
+	auto &tracker = ClientData::Get(context.client).rl_feature_tracker;
+	if (tracker) {
+		tracker->StartOperator(&op);
+	}
 }
 
 void PipelineExecutor::EndOperator(PhysicalOperator &op, optional_ptr<DataChunk> chunk) {
 	context.thread.profiler.EndOperator(chunk);
+
+	// Track actual rows produced for RL features
+	auto &tracker = ClientData::Get(context.client).rl_feature_tracker;
+	if (tracker && chunk) {
+		tracker->EndOperator(&op, chunk->size());
+	}
 
 	if (chunk) {
 		chunk->Verify();

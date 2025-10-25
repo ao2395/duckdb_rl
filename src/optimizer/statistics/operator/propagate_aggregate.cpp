@@ -7,6 +7,7 @@
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
+#include "duckdb/common/printer.hpp"
 
 namespace duckdb {
 
@@ -88,6 +89,15 @@ unique_ptr<NodeStatistics> StatisticsPropagator::PropagateStatistics(LogicalAggr
 	// first propagate statistics in the child node
 	node_stats = PropagateStatistics(aggr.children[0]);
 
+	// FEATURE LOGGING: Aggregate statistics
+	// Printer::Print("\n[RL FEATURE] ===== AGGREGATE STATISTICS =====");
+	// Printer::Print("[RL FEATURE] Number of GROUP BY columns: " + std::to_string(aggr.groups.size()));
+	// Printer::Print("[RL FEATURE] Number of aggregate functions: " + std::to_string(aggr.expressions.size()));
+	// Printer::Print("[RL FEATURE] Number of grouping sets: " + std::to_string(aggr.grouping_sets.size()));
+	if (node_stats) {
+		// Printer::Print("[RL FEATURE] Input Cardinality: " + std::to_string(node_stats->estimated_cardinality));
+	}
+
 	// handle the groups: simply propagate statistics and assign the stats to the group binding
 	aggr.group_stats.resize(aggr.groups.size());
 	for (idx_t group_idx = 0; group_idx < aggr.groups.size(); group_idx++) {
@@ -146,6 +156,13 @@ unique_ptr<NodeStatistics> StatisticsPropagator::PropagateStatistics(LogicalAggr
 
 	// after we propagate statistics - try to directly execute aggregates using statistics
 	TryExecuteAggregates(aggr, node_ptr);
+
+	// FEATURE LOGGING: Estimated output cardinality
+	if (node_stats) {
+		// Printer::Print("[RL FEATURE] Estimated Output Cardinality (max = input): " +
+		//                std::to_string(node_stats->estimated_cardinality));
+	}
+	// Printer::Print("[RL FEATURE] ===== END AGGREGATE STATISTICS =====\n");
 
 	// the max cardinality of an aggregate is the max cardinality of the input (i.e. when every row is a unique
 	// group)

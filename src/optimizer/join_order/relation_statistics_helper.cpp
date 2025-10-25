@@ -8,6 +8,8 @@
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/planner/filter/constant_filter.hpp"
+#include "duckdb/common/printer.hpp"
+#include "duckdb/optimizer/rl_feature_collector.hpp"
 
 #include <math.h>
 
@@ -80,6 +82,11 @@ RelationStats RelationStatisticsHelper::ExtractGetStats(LogicalGet &get, ClientC
 		return_stats.table_name = name;
 	}
 
+	// FEATURE LOGGING: Table scan statistics
+	// Printer::Print("\n[RL FEATURE] ===== TABLE SCAN STATS =====");
+	// Printer::Print("[RL FEATURE] Table Name: " + name);
+	// Printer::Print("[RL FEATURE] Base Table Cardinality: " + to_string(base_table_cardinality));
+
 	// first push back basic distinct counts for each column (if we have them).
 	auto &column_ids = get.GetColumnIds();
 	for (idx_t i = 0; i < column_ids.size(); i++) {
@@ -89,6 +96,9 @@ RelationStats RelationStatisticsHelper::ExtractGetStats(LogicalGet &get, ClientC
 			auto column_distinct_count = DistinctCount({distinct_count, true});
 			return_stats.column_distinct_count.push_back(column_distinct_count);
 			return_stats.column_names.push_back(name + "." + get.names.at(column_id));
+			// FEATURE LOGGING: Column distinct count
+			// Printer::Print("[RL FEATURE] Column: " + get.names.at(column_id) +
+			//                " | Distinct Count (HLL): " + to_string(distinct_count));
 		} else {
 			// treat the cardinality as the distinct count.
 			// the cardinality estimator will update these distinct counts based
@@ -100,10 +110,16 @@ RelationStats RelationStatisticsHelper::ExtractGetStats(LogicalGet &get, ClientC
 				column_name = get.names.at(column_id);
 			}
 			return_stats.column_names.push_back(get.GetName() + "." + column_name);
+			// FEATURE LOGGING: Column without HLL
+			// Printer::Print("[RL FEATURE] Column: " + column_name +
+			//                " | Distinct Count (fallback to cardinality): " + to_string(cardinality_after_filters));
 		}
 	}
 
 	if (!get.table_filters.filters.empty()) {
+		// FEATURE LOGGING: Filters detected
+		// Printer::Print("[RL FEATURE] Number of table filters: " + to_string(get.table_filters.filters.size()));
+
 		column_statistics = nullptr;
 		bool has_non_optional_filters = false;
 		for (auto &it : get.table_filters.filters) {
@@ -115,6 +131,9 @@ RelationStats RelationStatisticsHelper::ExtractGetStats(LogicalGet &get, ClientC
 				idx_t cardinality_with_filter =
 				    InspectTableFilter(base_table_cardinality, it.first, *it.second, *column_statistics);
 				cardinality_after_filters = MinValue(cardinality_after_filters, cardinality_with_filter);
+				// FEATURE LOGGING: Filter applied
+				// Printer::Print("[RL FEATURE] Filter on column " + to_string(it.first) +
+				//                " | Cardinality after filter: " + to_string(cardinality_with_filter));
 			}
 
 			if (it.second->filter_type != TableFilterType::OPTIONAL_FILTER) {
@@ -128,11 +147,25 @@ RelationStats RelationStatisticsHelper::ExtractGetStats(LogicalGet &get, ClientC
 			cardinality_after_filters = MaxValue<idx_t>(
 			    LossyNumericCast<idx_t>(double(base_table_cardinality) * RelationStatisticsHelper::DEFAULT_SELECTIVITY),
 			    1U);
+			// FEATURE LOGGING: Default selectivity used
+			// Printer::Print("[RL FEATURE] Using DEFAULT_SELECTIVITY: " +
+			//                to_string(RelationStatisticsHelper::DEFAULT_SELECTIVITY));
+			// Printer::Print("[RL FEATURE] Cardinality after default selectivity: " +
+			//                to_string(cardinality_after_filters));
 		}
 		if (base_table_cardinality == 0) {
 			cardinality_after_filters = 0;
 		}
 	}
+	// Printer::Print("[RL FEATURE] Final Cardinality (after filters): " + to_string(cardinality_after_filters));
+
+	// FEATURE LOGGING: Selectivity ratio
+	if (base_table_cardinality > 0) {
+		double selectivity = static_cast<double>(cardinality_after_filters) / static_cast<double>(base_table_cardinality);
+		// Printer::Print("[RL FEATURE] Filter Selectivity Ratio: " + to_string(selectivity));
+	}
+
+	// Printer::Print("[RL FEATURE] ===== END TABLE SCAN STATS =====\n");
 	return_stats.cardinality = cardinality_after_filters;
 	// update the estimated cardinality of the get as well.
 	// This is not updated during plan reconstruction.
@@ -140,6 +173,66 @@ RelationStats RelationStatisticsHelper::ExtractGetStats(LogicalGet &get, ClientC
 	get.has_estimated_cardinality = true;
 	D_ASSERT(base_table_cardinality >= cardinality_after_filters);
 	return_stats.stats_initialized = true;
+
+	// Populate RL feature collector with table scan features
+	TableScanFeatures rl_features;
+	rl_features.table_name = name;
+	rl_features.base_cardinality = base_table_cardinality;
+	rl_features.final_cardinality = cardinality_after_filters;
+	rl_features.num_table_filters = get.table_filters.filters.size();
+	if (base_table_cardinality > 0) {
+		rl_features.filter_selectivity = static_cast<double>(cardinality_after_filters) / static_cast<double>(base_table_cardinality);
+	}
+
+	// Check if default selectivity was used
+	bool has_equality_filter = (cardinality_after_filters != base_table_cardinality);
+	bool has_non_optional_filters = false;
+	for (auto &it : get.table_filters.filters) {
+		if (it.second->filter_type != TableFilterType::OPTIONAL_FILTER) {
+			has_non_optional_filters = true;
+		}
+	}
+	if (!has_equality_filter && has_non_optional_filters) {
+		rl_features.used_default_selectivity = true;
+		rl_features.cardinality_after_default_selectivity = cardinality_after_filters;
+	}
+
+	// Collect filter details
+	for (auto &it : get.table_filters.filters) {
+		rl_features.filter_column_ids.push_back(it.first);
+		auto &filter_ref = *it.second;
+
+		// Collect filter type and comparison type
+		if (filter_ref.filter_type == TableFilterType::CONJUNCTION_AND) {
+			auto &and_filter = filter_ref.Cast<ConjunctionAndFilter>();
+			rl_features.filter_types.push_back("CONJUNCTION_AND");
+			rl_features.comparison_types.push_back("");
+
+			// Also add child filters
+			for (auto &child : and_filter.child_filters) {
+				if (child->filter_type == TableFilterType::CONSTANT_COMPARISON) {
+					auto &comp_filter = child->Cast<ConstantFilter>();
+					rl_features.filter_types.push_back("CONSTANT_COMPARISON");
+					rl_features.comparison_types.push_back(ExpressionTypeToString(comp_filter.comparison_type));
+				}
+			}
+		} else if (filter_ref.filter_type == TableFilterType::CONSTANT_COMPARISON) {
+			auto &comp_filter = filter_ref.Cast<ConstantFilter>();
+			rl_features.filter_types.push_back("CONSTANT_COMPARISON");
+			rl_features.comparison_types.push_back(ExpressionTypeToString(comp_filter.comparison_type));
+		}
+	}
+
+	// Add column distinct counts
+	for (idx_t i = 0; i < column_ids.size(); i++) {
+		auto column_id = column_ids[i].GetPrimaryIndex();
+		auto distinct_count = GetDistinctCount(get, context, column_id);
+		if (distinct_count > 0 && column_id < get.names.size()) {
+			rl_features.column_distinct_counts[get.names.at(column_id)] = distinct_count;
+		}
+	}
+	RLFeatureCollector::Get().AddTableScanFeatures(&get, rl_features);
+
 	return return_stats;
 }
 
@@ -426,9 +519,15 @@ RelationStats RelationStatisticsHelper::ExtractEmptyResultStats(LogicalEmptyResu
 idx_t RelationStatisticsHelper::InspectTableFilter(idx_t cardinality, idx_t column_index, TableFilter &filter,
                                                    BaseStatistics &base_stats) {
 	auto cardinality_after_filters = cardinality;
+
+	// FEATURE LOGGING: Filter inspection
+	// Printer::Print("[RL FEATURE] --- Filter Inspection on column " + to_string(column_index) + " ---");
+
 	switch (filter.filter_type) {
 	case TableFilterType::CONJUNCTION_AND: {
+		// Printer::Print("[RL FEATURE] Filter Type: CONJUNCTION_AND");
 		auto &and_filter = filter.Cast<ConjunctionAndFilter>();
+		// Printer::Print("[RL FEATURE] Number of AND child filters: " + to_string(and_filter.child_filters.size()));
 		for (auto &child_filter : and_filter.child_filters) {
 			cardinality_after_filters = MinValue(
 			    cardinality_after_filters, InspectTableFilter(cardinality, column_index, *child_filter, base_stats));
@@ -437,18 +536,28 @@ idx_t RelationStatisticsHelper::InspectTableFilter(idx_t cardinality, idx_t colu
 	}
 	case TableFilterType::CONSTANT_COMPARISON: {
 		auto &comparison_filter = filter.Cast<ConstantFilter>();
+		// Printer::Print("[RL FEATURE] Filter Type: CONSTANT_COMPARISON");
+		// Printer::Print("[RL FEATURE] Comparison Type: " + ExpressionTypeToString(comparison_filter.comparison_type));
+
 		if (comparison_filter.comparison_type != ExpressionType::COMPARE_EQUAL) {
+			// Printer::Print("[RL FEATURE] Non-equality comparison - no selectivity applied");
 			return cardinality_after_filters;
 		}
 		auto column_count = base_stats.GetDistinctCount();
+		// Printer::Print("[RL FEATURE] Column Distinct Count: " + to_string(column_count));
+
 		// column_count = 0 when there is no column count (i.e parquet scans)
 		if (column_count > 0) {
 			// we want the ceil of cardinality/column_count. We also want to avoid compiler errors
 			cardinality_after_filters = (cardinality + column_count - 1) / column_count;
+			// Printer::Print("[RL FEATURE] Equality Filter Selectivity: cardinality/distinct_count");
+			// Printer::Print("[RL FEATURE] Result: " + to_string(cardinality) + " / " + to_string(column_count) +
+			            //    " = " + to_string(cardinality_after_filters));
 		}
 		return cardinality_after_filters;
 	}
 	default:
+		// Printer::Print("[RL FEATURE] Filter Type: OTHER (no selectivity applied)");
 		return cardinality_after_filters;
 	}
 }

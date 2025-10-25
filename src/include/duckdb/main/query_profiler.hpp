@@ -47,6 +47,7 @@ struct OperatorInformation {
 	idx_t result_set_size = 0;
 	idx_t system_peak_buffer_manager_memory = 0;
 	idx_t system_peak_temp_directory_size = 0;
+	idx_t estimated_cardinality = 0;
 
 	InsertionOrderPreservingMap<string> extra_info;
 
@@ -252,6 +253,8 @@ private:
 	TreeMap tree_map;
 	//! Whether or not we are running as part of a explain_analyze query
 	bool is_explain_analyze;
+	//! Map to store estimated cardinalities for aggregated logging
+	reference_map_t<const PhysicalOperator, idx_t> operator_estimated_cardinalities;
 
 public:
 	const TreeMap &GetTreeMap() const {

@@ -6,6 +6,7 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/query_profiler.hpp"
+#include "duckdb/main/rl_model_interface.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/operator/logical_extension_operator.hpp"
 #include "duckdb/planner/operator/list.hpp"
@@ -68,6 +69,15 @@ unique_ptr<PhysicalPlan> PhysicalPlanGenerator::PlanInternal(LogicalOperator &op
 }
 
 PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalOperator &op) {
+	// RL MODEL INFERENCE: Extract features and get estimate from model for EVERY operator
+	RLModelInterface rl_model(context);
+	auto features = rl_model.ExtractFeatures(op, context);
+	auto rl_estimate = rl_model.GetCardinalityEstimate(features);
+	// For now, we don't override - just print features (rl_estimate will be 0)
+	if (rl_estimate > 0) {
+		op.estimated_cardinality = rl_estimate;
+	}
+
 	switch (op.type) {
 	case LogicalOperatorType::LOGICAL_GET:
 		return CreatePlan(op.Cast<LogicalGet>());
