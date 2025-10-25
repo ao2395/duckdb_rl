@@ -221,8 +221,12 @@ double CardinalityEstimator::CalculateUpdatedDenom(Subgraph2Denominator left, Su
 	// Collect join features for RL model
 	JoinFeatures rl_join_features;
 	rl_join_features.join_type = EnumUtil::ToString(filter.filter_info->join_type);
-	rl_join_features.left_relation_card = left.relations->count;
-	rl_join_features.right_relation_card = right.relations->count;
+
+	// Get actual cardinalities (not just relation count)
+	// Note: GetNumerator multiplies all cardinalities in the set, which is correct for the numerator
+	// but for left/right cardinalities we want the product of all relations in each side
+	rl_join_features.left_relation_card = static_cast<idx_t>(GetNumerator(*left.relations));
+	rl_join_features.right_relation_card = static_cast<idx_t>(GetNumerator(*right.relations));
 	rl_join_features.left_denominator = left.denom;
 	rl_join_features.right_denominator = right.denom;
 

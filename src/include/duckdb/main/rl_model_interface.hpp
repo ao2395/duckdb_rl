@@ -77,12 +77,26 @@ public:
 	//! Returns 0 if model should not override DuckDB's estimate
 	idx_t GetCardinalityEstimate(const OperatorFeatures &features);
 
+	//! Convert features to numerical vector for ML model input
+	//! Returns a fixed-size vector of doubles suitable for feeding to an ML model
+	vector<double> FeaturesToVector(const OperatorFeatures &features);
+
 	//! Train the model with actual cardinality (to be implemented later)
 	void TrainModel(const OperatorFeatures &features, idx_t actual_cardinality);
 
 private:
 	ClientContext &context;
 	bool enabled;
+
+	// Feature vector size:
+	// - Operator type (10 one-hot)
+	// - Table scan features (8)
+	// - Join features (21)
+	// - Aggregate features (4)
+	// - Filter features (2)
+	// - Context features (1)
+	// Total: 46, rounded to 64 for future expansion
+	static constexpr idx_t FEATURE_VECTOR_SIZE = 64;
 };
 
 } // namespace duckdb

@@ -261,6 +261,118 @@ OperatorFeatures RLModelInterface::ExtractFeatures(LogicalOperator &op, ClientCo
 	return features;
 }
 
+vector<double> RLModelInterface::FeaturesToVector(const OperatorFeatures &features) {
+	vector<double> feature_vec(FEATURE_VECTOR_SIZE, 0.0);
+	idx_t idx = 0;
+
+	// Helper lambda for safe log (avoid log(0))
+	auto safe_log = [](idx_t val) -> double {
+		return val > 0 ? std::log(static_cast<double>(val)) : 0.0;
+	};
+
+	// 1. OPERATOR TYPE (One-hot encoding) - 10 features
+	// GET, JOIN, FILTER, AGGREGATE, PROJECTION, TOP_N, ORDER_BY, LIMIT, UNION, OTHER
+	if (!features.table_name.empty()) {
+		feature_vec[idx] = 1.0; // GET
+	} else if (!features.join_type.empty()) {
+		feature_vec[idx + 1] = 1.0; // JOIN
+	} else if (!features.filter_types.empty() && features.table_name.empty()) {
+		feature_vec[idx + 2] = 1.0; // FILTER
+	} else if (features.num_group_by_columns > 0 || features.num_aggregate_functions > 0) {
+		feature_vec[idx + 3] = 1.0; // AGGREGATE
+	} else {
+		feature_vec[idx + 9] = 1.0; // OTHER (PROJECTION, TOP_N, etc.)
+	}
+	idx += 10;
+
+	// 2. TABLE SCAN FEATURES - 8 features
+	if (!features.table_name.empty()) {
+		feature_vec[idx++] = safe_log(features.base_table_cardinality);
+		feature_vec[idx++] = static_cast<double>(features.num_table_filters);
+		feature_vec[idx++] = features.filter_selectivity;
+		feature_vec[idx++] = features.used_default_selectivity ? 1.0 : 0.0;
+		feature_vec[idx++] = static_cast<double>(features.filter_types.size());
+
+		// Column distinct count statistics
+		if (!features.column_distinct_counts.empty() && features.base_table_cardinality > 0) {
+			double sum = 0.0, min_ratio = 1.0, max_ratio = 0.0;
+			for (const auto &entry : features.column_distinct_counts) {
+				double ratio = static_cast<double>(entry.second) / static_cast<double>(features.base_table_cardinality);
+				sum += ratio;
+				min_ratio = std::min(min_ratio, ratio);
+				max_ratio = std::max(max_ratio, ratio);
+			}
+			feature_vec[idx++] = sum / features.column_distinct_counts.size(); // avg ratio
+			feature_vec[idx++] = max_ratio;
+			feature_vec[idx++] = min_ratio;
+		} else {
+			idx += 3;
+		}
+	} else {
+		idx += 8;
+	}
+
+	// 3. JOIN FEATURES - 21 features
+	if (!features.join_type.empty()) {
+		feature_vec[idx++] = safe_log(features.left_cardinality);
+		feature_vec[idx++] = safe_log(features.right_cardinality);
+		feature_vec[idx++] = safe_log(features.tdom_value);
+		feature_vec[idx++] = features.tdom_from_hll ? 1.0 : 0.0;
+
+		// Join type one-hot (INNER, LEFT, RIGHT, SEMI, ANTI)
+		if (features.join_type == "INNER") feature_vec[idx] = 1.0;
+		else if (features.join_type == "LEFT") feature_vec[idx + 1] = 1.0;
+		else if (features.join_type == "RIGHT") feature_vec[idx + 2] = 1.0;
+		else if (features.join_type == "SEMI") feature_vec[idx + 3] = 1.0;
+		else if (features.join_type == "ANTI") feature_vec[idx + 4] = 1.0;
+		idx += 5;
+
+		// Comparison type one-hot (EQUAL, LT, GT, LTE, GTE, NEQ)
+		if (features.comparison_type_join == "EQUAL") feature_vec[idx] = 1.0;
+		else if (features.comparison_type_join == "LESSTHAN") feature_vec[idx + 1] = 1.0;
+		else if (features.comparison_type_join == "GREATERTHAN") feature_vec[idx + 2] = 1.0;
+		else if (features.comparison_type_join == "LESSTHANOREQUALTO") feature_vec[idx + 3] = 1.0;
+		else if (features.comparison_type_join == "GREATERTHANOREQUALTO") feature_vec[idx + 4] = 1.0;
+		else if (features.comparison_type_join == "NOTEQUAL") feature_vec[idx + 5] = 1.0;
+		idx += 6;
+
+		feature_vec[idx++] = safe_log(static_cast<idx_t>(features.extra_ratio));
+		feature_vec[idx++] = std::log(std::max(1.0, features.numerator));
+		feature_vec[idx++] = std::log(std::max(1.0, features.denominator));
+		feature_vec[idx++] = static_cast<double>(features.num_relations);
+		feature_vec[idx++] = std::log(std::max(1.0, features.left_denominator));
+		feature_vec[idx++] = std::log(std::max(1.0, features.right_denominator));
+	} else {
+		idx += 21;
+	}
+
+	// 4. AGGREGATE FEATURES - 4 features
+	if (features.num_group_by_columns > 0 || features.num_aggregate_functions > 0) {
+		feature_vec[idx++] = safe_log(features.estimated_cardinality); // Input from child
+		feature_vec[idx++] = static_cast<double>(features.num_group_by_columns);
+		feature_vec[idx++] = static_cast<double>(features.num_aggregate_functions);
+		feature_vec[idx++] = static_cast<double>(features.num_grouping_sets);
+	} else {
+		idx += 4;
+	}
+
+	// 5. FILTER FEATURES - 2 features
+	if (!features.filter_types.empty() && features.table_name.empty()) {
+		feature_vec[idx++] = safe_log(features.estimated_cardinality); // Input from child
+		feature_vec[idx++] = static_cast<double>(features.filter_types.size());
+	} else {
+		idx += 2;
+	}
+
+	// 6. CONTEXT FEATURES - 1 feature
+	feature_vec[idx++] = safe_log(features.estimated_cardinality); // DuckDB's estimate
+
+	// Remaining features are padding (already initialized to 0.0)
+	D_ASSERT(idx <= FEATURE_VECTOR_SIZE);
+
+	return feature_vec;
+}
+
 idx_t RLModelInterface::GetCardinalityEstimate(const OperatorFeatures &features) {
 	if (!enabled) {
 		return 0; // Don't override
@@ -268,6 +380,91 @@ idx_t RLModelInterface::GetCardinalityEstimate(const OperatorFeatures &features)
 
 	// Print all features received by the model
 	Printer::Print(features.ToString());
+
+	// Convert features to vector
+	auto feature_vec = FeaturesToVector(features);
+
+	// Print feature vector for debugging
+	Printer::Print("[RL MODEL] ========== FEATURE VECTOR ==========\n");
+	Printer::Print("[RL MODEL] Feature vector size: " + std::to_string(feature_vec.size()) + "\n");
+
+	// Print first 46 features (actual features, not padding)
+	std::string vec_str = "[RL MODEL] Vector values: [";
+	idx_t num_to_print = feature_vec.size() < 46 ? feature_vec.size() : 46;
+	for (idx_t i = 0; i < num_to_print; i++) {
+		if (i > 0) vec_str += ", ";
+		vec_str += std::to_string(feature_vec[i]);
+	}
+	vec_str += "]\n";
+	Printer::Print(vec_str);
+
+	// Print non-zero features with labels
+	Printer::Print("[RL MODEL] Non-zero features:\n");
+	idx_t idx = 0;
+
+	// Operator type (0-9)
+	if (feature_vec[0] > 0) Printer::Print("[RL MODEL]   [0] Operator=GET: 1.0\n");
+	if (feature_vec[1] > 0) Printer::Print("[RL MODEL]   [1] Operator=JOIN: 1.0\n");
+	if (feature_vec[2] > 0) Printer::Print("[RL MODEL]   [2] Operator=FILTER: 1.0\n");
+	if (feature_vec[3] > 0) Printer::Print("[RL MODEL]   [3] Operator=AGGREGATE: 1.0\n");
+	if (feature_vec[9] > 0) Printer::Print("[RL MODEL]   [9] Operator=OTHER: 1.0\n");
+	idx = 10;
+
+	// Table scan features (10-17)
+	if (feature_vec[10] > 0) Printer::Print("[RL MODEL]   [10] log(base_cardinality): " + std::to_string(feature_vec[10]) + "\n");
+	if (feature_vec[11] > 0) Printer::Print("[RL MODEL]   [11] num_table_filters: " + std::to_string(feature_vec[11]) + "\n");
+	if (feature_vec[12] > 0) Printer::Print("[RL MODEL]   [12] filter_selectivity: " + std::to_string(feature_vec[12]) + "\n");
+	if (feature_vec[13] > 0) Printer::Print("[RL MODEL]   [13] used_default_selectivity: " + std::to_string(feature_vec[13]) + "\n");
+	if (feature_vec[14] > 0) Printer::Print("[RL MODEL]   [14] num_filter_types: " + std::to_string(feature_vec[14]) + "\n");
+	if (feature_vec[15] > 0) Printer::Print("[RL MODEL]   [15] avg_distinct_ratio: " + std::to_string(feature_vec[15]) + "\n");
+	if (feature_vec[16] > 0) Printer::Print("[RL MODEL]   [16] max_distinct_ratio: " + std::to_string(feature_vec[16]) + "\n");
+	if (feature_vec[17] > 0) Printer::Print("[RL MODEL]   [17] min_distinct_ratio: " + std::to_string(feature_vec[17]) + "\n");
+
+	// Join features (18-38)
+	if (feature_vec[18] > 0) Printer::Print("[RL MODEL]   [18] log(left_cardinality): " + std::to_string(feature_vec[18]) + "\n");
+	if (feature_vec[19] > 0) Printer::Print("[RL MODEL]   [19] log(right_cardinality): " + std::to_string(feature_vec[19]) + "\n");
+	if (feature_vec[20] > 0) Printer::Print("[RL MODEL]   [20] log(tdom_value): " + std::to_string(feature_vec[20]) + "\n");
+	if (feature_vec[21] > 0) Printer::Print("[RL MODEL]   [21] tdom_from_hll: " + std::to_string(feature_vec[21]) + "\n");
+
+	// Join type (22-26)
+	if (feature_vec[22] > 0) Printer::Print("[RL MODEL]   [22] join_type=INNER: 1.0\n");
+	if (feature_vec[23] > 0) Printer::Print("[RL MODEL]   [23] join_type=LEFT: 1.0\n");
+	if (feature_vec[24] > 0) Printer::Print("[RL MODEL]   [24] join_type=RIGHT: 1.0\n");
+	if (feature_vec[25] > 0) Printer::Print("[RL MODEL]   [25] join_type=SEMI: 1.0\n");
+	if (feature_vec[26] > 0) Printer::Print("[RL MODEL]   [26] join_type=ANTI: 1.0\n");
+
+	// Comparison type (27-32)
+	if (feature_vec[27] > 0) Printer::Print("[RL MODEL]   [27] comparison=EQUAL: 1.0\n");
+	if (feature_vec[28] > 0) Printer::Print("[RL MODEL]   [28] comparison=LT: 1.0\n");
+	if (feature_vec[29] > 0) Printer::Print("[RL MODEL]   [29] comparison=GT: 1.0\n");
+	if (feature_vec[30] > 0) Printer::Print("[RL MODEL]   [30] comparison=LTE: 1.0\n");
+	if (feature_vec[31] > 0) Printer::Print("[RL MODEL]   [31] comparison=GTE: 1.0\n");
+	if (feature_vec[32] > 0) Printer::Print("[RL MODEL]   [32] comparison=NEQ: 1.0\n");
+
+	// More join features (33-38)
+	if (feature_vec[33] > 0) Printer::Print("[RL MODEL]   [33] log(extra_ratio): " + std::to_string(feature_vec[33]) + "\n");
+	if (feature_vec[34] > 0) Printer::Print("[RL MODEL]   [34] log(numerator): " + std::to_string(feature_vec[34]) + "\n");
+	if (feature_vec[35] > 0) Printer::Print("[RL MODEL]   [35] log(denominator): " + std::to_string(feature_vec[35]) + "\n");
+	if (feature_vec[36] > 0) Printer::Print("[RL MODEL]   [36] num_relations: " + std::to_string(feature_vec[36]) + "\n");
+	if (feature_vec[37] > 0) Printer::Print("[RL MODEL]   [37] log(left_denominator): " + std::to_string(feature_vec[37]) + "\n");
+	if (feature_vec[38] > 0) Printer::Print("[RL MODEL]   [38] log(right_denominator): " + std::to_string(feature_vec[38]) + "\n");
+
+	// Aggregate features (39-42)
+	if (feature_vec[39] > 0) Printer::Print("[RL MODEL]   [39] log(input_card_aggregate): " + std::to_string(feature_vec[39]) + "\n");
+	if (feature_vec[40] > 0) Printer::Print("[RL MODEL]   [40] num_group_by_cols: " + std::to_string(feature_vec[40]) + "\n");
+	if (feature_vec[41] > 0) Printer::Print("[RL MODEL]   [41] num_agg_functions: " + std::to_string(feature_vec[41]) + "\n");
+	if (feature_vec[42] > 0) Printer::Print("[RL MODEL]   [42] num_grouping_sets: " + std::to_string(feature_vec[42]) + "\n");
+
+	// Filter features (43-44)
+	if (feature_vec[43] > 0) Printer::Print("[RL MODEL]   [43] log(input_card_filter): " + std::to_string(feature_vec[43]) + "\n");
+	if (feature_vec[44] > 0) Printer::Print("[RL MODEL]   [44] num_filters: " + std::to_string(feature_vec[44]) + "\n");
+
+	// Context feature (45)
+	if (feature_vec[45] > 0) Printer::Print("[RL MODEL]   [45] log(duckdb_estimate): " + std::to_string(feature_vec[45]) + "\n");
+
+	Printer::Print("[RL MODEL] ==========================================\n");
+
+	// TODO: Feed feature_vec to ML model and get prediction
 
 	// For now, pass through DuckDB's estimate
 	// Later this will be replaced with actual RL model inference
