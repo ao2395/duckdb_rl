@@ -7,12 +7,23 @@
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/operator/logical_filter.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
+#include "duckdb/main/rl_model_interface.hpp"
 
 namespace duckdb {
 
 PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalFilter &op) {
 	D_ASSERT(op.children.size() == 1);
 	reference<PhysicalOperator> plan = CreatePlan(*op.children[0]);
+
+	// RL MODEL INFERENCE: After child is created, extract features and get estimate
+	RLModelInterface rl_model(context);
+	auto features = rl_model.ExtractFeatures(op, context);
+	auto rl_estimate = rl_model.GetCardinalityEstimate(features);
+	// For now, we don't override - just print features (rl_estimate will be 0)
+	if (rl_estimate > 0) {
+		op.estimated_cardinality = rl_estimate;
+	}
+
 	if (!op.expressions.empty()) {
 		D_ASSERT(!plan.get().GetTypes().empty());
 		// create a filter if there is anything to filter

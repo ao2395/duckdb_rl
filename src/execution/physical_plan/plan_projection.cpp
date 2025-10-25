@@ -2,12 +2,22 @@
 #include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
+#include "duckdb/main/rl_model_interface.hpp"
 
 namespace duckdb {
 
 PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalProjection &op) {
 	D_ASSERT(op.children.size() == 1);
 	auto &plan = CreatePlan(*op.children[0]);
+
+	// RL MODEL INFERENCE: After child is created, extract features and get estimate
+	RLModelInterface rl_model(context);
+	auto features = rl_model.ExtractFeatures(op, context);
+	auto rl_estimate = rl_model.GetCardinalityEstimate(features);
+	// For now, we don't override - just print features (rl_estimate will be 0)
+	if (rl_estimate > 0) {
+		op.estimated_cardinality = rl_estimate;
+	}
 
 #ifdef DEBUG
 	for (auto &expr : op.expressions) {

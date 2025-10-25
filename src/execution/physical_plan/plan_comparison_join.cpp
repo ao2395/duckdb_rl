@@ -11,6 +11,7 @@
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/operator/logical_comparison_join.hpp"
 #include "duckdb/main/settings.hpp"
+#include "duckdb/main/rl_model_interface.hpp"
 
 namespace duckdb {
 
@@ -28,6 +29,16 @@ PhysicalOperator &PhysicalPlanGenerator::PlanComparisonJoin(LogicalComparisonJoi
 	auto &right = CreatePlan(*op.children[1]);
 	left.estimated_cardinality = lhs_cardinality;
 	right.estimated_cardinality = rhs_cardinality;
+
+	// RL MODEL INFERENCE: After children are created, extract features and get estimate
+	// This ensures we have the RL model's estimates for children available
+	RLModelInterface rl_model(context);
+	auto features = rl_model.ExtractFeatures(op, context);
+	auto rl_estimate = rl_model.GetCardinalityEstimate(features);
+	// For now, we don't override - just print features (rl_estimate will be 0)
+	if (rl_estimate > 0) {
+		op.estimated_cardinality = rl_estimate;
+	}
 
 	if (op.conditions.empty()) {
 		// no conditions: insert a cross product

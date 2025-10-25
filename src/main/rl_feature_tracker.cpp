@@ -57,16 +57,16 @@ void RLFeatureTracker::Finalize() {
 		idx_t actual_count = stats.actual_cardinality.load();
 
 		if (actual_count > 0) {
-			Printer::Print("\n[RL FEATURE] *** ACTUAL CARDINALITY *** Operator: " + stats.operator_name +
-			               " | Actual Output: " + std::to_string(actual_count) +
-			               " | Estimated: " + std::to_string(stats.estimated_cardinality));
+			// Printer::Print("\n[RL FEATURE] *** ACTUAL CARDINALITY *** Operator: " + stats.operator_name +
+			//                " | Actual Output: " + std::to_string(actual_count) +
+			//                " | Estimated: " + std::to_string(stats.estimated_cardinality));
 
 			if (stats.estimated_cardinality > 0) {
 				double error = static_cast<double>(actual_count) / static_cast<double>(stats.estimated_cardinality);
 				if (error < 1.0) {
 					error = 1.0 / error;
 				}
-				Printer::Print("[RL FEATURE] *** Q-ERROR *** " + std::to_string(error));
+				// Printer::Print("[RL FEATURE] *** Q-ERROR *** " + std::to_string(error));
 			}
 		}
 	}

@@ -11,6 +11,7 @@
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/execution/operator/filter/physical_filter.hpp"
+#include "duckdb/main/rl_model_interface.hpp"
 
 namespace duckdb {
 
@@ -35,6 +36,15 @@ unique_ptr<TableFilterSet> CreateTableFilterSet(TableFilterSet &table_filters, c
 }
 
 PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
+	// RL MODEL INFERENCE: Extract features and get estimate (GET is a leaf node, so this is always bottom-up)
+	RLModelInterface rl_model(context);
+	auto features = rl_model.ExtractFeatures(op, context);
+	auto rl_estimate = rl_model.GetCardinalityEstimate(features);
+	// For now, we don't override - just print features (rl_estimate will be 0)
+	if (rl_estimate > 0) {
+		op.estimated_cardinality = rl_estimate;
+	}
+
 	auto column_ids = op.GetColumnIds();
 	if (!op.children.empty()) {
 		reference<PhysicalOperator> child = ResolveAndPlan(std::move(op.children[0]));
