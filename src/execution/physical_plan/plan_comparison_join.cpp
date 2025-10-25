@@ -27,8 +27,10 @@ PhysicalOperator &PhysicalPlanGenerator::PlanComparisonJoin(LogicalComparisonJoi
 	idx_t rhs_cardinality = op.children[1]->EstimateCardinality(context);
 	auto &left = CreatePlan(*op.children[0]);
 	auto &right = CreatePlan(*op.children[1]);
-	left.estimated_cardinality = lhs_cardinality;
-	right.estimated_cardinality = rhs_cardinality;
+	// IMPORTANT: Don't overwrite child operators' cardinalities!
+	// The RL model has already set the correct cardinality during CreatePlan()
+	// left.estimated_cardinality = lhs_cardinality;
+	// right.estimated_cardinality = rhs_cardinality;
 
 	// RL MODEL INFERENCE: After children are created, extract features and get estimate
 	// This ensures we have the RL model's estimates for children available

@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "duckdb/main/rl_model_interface.hpp"
+#include "duckdb/main/rl_cardinality_model.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/common/printer.hpp"
 #include "duckdb/optimizer/rl_feature_collector.hpp"
@@ -20,7 +21,7 @@
 namespace duckdb {
 
 RLModelInterface::RLModelInterface(ClientContext &context) : context(context), enabled(true) {
-	// Always enabled for now
+	// Model is a singleton - no need to create it here
 }
 
 string OperatorFeatures::ToString() const {
@@ -209,6 +210,11 @@ OperatorFeatures RLModelInterface::ExtractFeatures(LogicalOperator &op, ClientCo
 			features.filter_types.push_back(ExpressionTypeToString(expr->type));
 		}
 
+		// Get child cardinality as context
+		if (!filter.children.empty()) {
+			features.child_cardinality = filter.children[0]->estimated_cardinality;
+		}
+
 		// Get detailed filter features from collector
 		auto filter_features = collector.GetFilterFeatures(&op);
 		if (filter_features) {
@@ -358,7 +364,7 @@ vector<double> RLModelInterface::FeaturesToVector(const OperatorFeatures &featur
 
 	// 5. FILTER FEATURES - 2 features
 	if (!features.filter_types.empty() && features.table_name.empty()) {
-		feature_vec[idx++] = safe_log(features.estimated_cardinality); // Input from child
+		feature_vec[idx++] = safe_log(features.child_cardinality); // Input from child operator
 		feature_vec[idx++] = static_cast<double>(features.filter_types.size());
 	} else {
 		idx += 2;
@@ -384,92 +390,19 @@ idx_t RLModelInterface::GetCardinalityEstimate(const OperatorFeatures &features)
 	// Convert features to vector
 	auto feature_vec = FeaturesToVector(features);
 
-	// Print feature vector for debugging
-	Printer::Print("[RL MODEL] ========== FEATURE VECTOR ==========\n");
-	Printer::Print("[RL MODEL] Feature vector size: " + std::to_string(feature_vec.size()) + "\n");
+	// Call the singleton model's Predict method
+	double predicted_cardinality = RLCardinalityModel::Get().Predict(feature_vec);
 
-	// Print first 46 features (actual features, not padding)
-	std::string vec_str = "[RL MODEL] Vector values: [";
-	idx_t num_to_print = feature_vec.size() < 46 ? feature_vec.size() : 46;
-	for (idx_t i = 0; i < num_to_print; i++) {
-		if (i > 0) vec_str += ", ";
-		vec_str += std::to_string(feature_vec[i]);
+	// If model returns 0, use DuckDB's estimate
+	if (predicted_cardinality <= 0.0) {
+		Printer::Print("[RL MODEL] Returning DuckDB estimate: " + std::to_string(features.estimated_cardinality) + "\n");
+		return features.estimated_cardinality;
 	}
-	vec_str += "]\n";
-	Printer::Print(vec_str);
 
-	// Print non-zero features with labels
-	Printer::Print("[RL MODEL] Non-zero features:\n");
-	idx_t idx = 0;
-
-	// Operator type (0-9)
-	if (feature_vec[0] > 0) Printer::Print("[RL MODEL]   [0] Operator=GET: 1.0\n");
-	if (feature_vec[1] > 0) Printer::Print("[RL MODEL]   [1] Operator=JOIN: 1.0\n");
-	if (feature_vec[2] > 0) Printer::Print("[RL MODEL]   [2] Operator=FILTER: 1.0\n");
-	if (feature_vec[3] > 0) Printer::Print("[RL MODEL]   [3] Operator=AGGREGATE: 1.0\n");
-	if (feature_vec[9] > 0) Printer::Print("[RL MODEL]   [9] Operator=OTHER: 1.0\n");
-	idx = 10;
-
-	// Table scan features (10-17)
-	if (feature_vec[10] > 0) Printer::Print("[RL MODEL]   [10] log(base_cardinality): " + std::to_string(feature_vec[10]) + "\n");
-	if (feature_vec[11] > 0) Printer::Print("[RL MODEL]   [11] num_table_filters: " + std::to_string(feature_vec[11]) + "\n");
-	if (feature_vec[12] > 0) Printer::Print("[RL MODEL]   [12] filter_selectivity: " + std::to_string(feature_vec[12]) + "\n");
-	if (feature_vec[13] > 0) Printer::Print("[RL MODEL]   [13] used_default_selectivity: " + std::to_string(feature_vec[13]) + "\n");
-	if (feature_vec[14] > 0) Printer::Print("[RL MODEL]   [14] num_filter_types: " + std::to_string(feature_vec[14]) + "\n");
-	if (feature_vec[15] > 0) Printer::Print("[RL MODEL]   [15] avg_distinct_ratio: " + std::to_string(feature_vec[15]) + "\n");
-	if (feature_vec[16] > 0) Printer::Print("[RL MODEL]   [16] max_distinct_ratio: " + std::to_string(feature_vec[16]) + "\n");
-	if (feature_vec[17] > 0) Printer::Print("[RL MODEL]   [17] min_distinct_ratio: " + std::to_string(feature_vec[17]) + "\n");
-
-	// Join features (18-38)
-	if (feature_vec[18] > 0) Printer::Print("[RL MODEL]   [18] log(left_cardinality): " + std::to_string(feature_vec[18]) + "\n");
-	if (feature_vec[19] > 0) Printer::Print("[RL MODEL]   [19] log(right_cardinality): " + std::to_string(feature_vec[19]) + "\n");
-	if (feature_vec[20] > 0) Printer::Print("[RL MODEL]   [20] log(tdom_value): " + std::to_string(feature_vec[20]) + "\n");
-	if (feature_vec[21] > 0) Printer::Print("[RL MODEL]   [21] tdom_from_hll: " + std::to_string(feature_vec[21]) + "\n");
-
-	// Join type (22-26)
-	if (feature_vec[22] > 0) Printer::Print("[RL MODEL]   [22] join_type=INNER: 1.0\n");
-	if (feature_vec[23] > 0) Printer::Print("[RL MODEL]   [23] join_type=LEFT: 1.0\n");
-	if (feature_vec[24] > 0) Printer::Print("[RL MODEL]   [24] join_type=RIGHT: 1.0\n");
-	if (feature_vec[25] > 0) Printer::Print("[RL MODEL]   [25] join_type=SEMI: 1.0\n");
-	if (feature_vec[26] > 0) Printer::Print("[RL MODEL]   [26] join_type=ANTI: 1.0\n");
-
-	// Comparison type (27-32)
-	if (feature_vec[27] > 0) Printer::Print("[RL MODEL]   [27] comparison=EQUAL: 1.0\n");
-	if (feature_vec[28] > 0) Printer::Print("[RL MODEL]   [28] comparison=LT: 1.0\n");
-	if (feature_vec[29] > 0) Printer::Print("[RL MODEL]   [29] comparison=GT: 1.0\n");
-	if (feature_vec[30] > 0) Printer::Print("[RL MODEL]   [30] comparison=LTE: 1.0\n");
-	if (feature_vec[31] > 0) Printer::Print("[RL MODEL]   [31] comparison=GTE: 1.0\n");
-	if (feature_vec[32] > 0) Printer::Print("[RL MODEL]   [32] comparison=NEQ: 1.0\n");
-
-	// More join features (33-38)
-	if (feature_vec[33] > 0) Printer::Print("[RL MODEL]   [33] log(extra_ratio): " + std::to_string(feature_vec[33]) + "\n");
-	if (feature_vec[34] > 0) Printer::Print("[RL MODEL]   [34] log(numerator): " + std::to_string(feature_vec[34]) + "\n");
-	if (feature_vec[35] > 0) Printer::Print("[RL MODEL]   [35] log(denominator): " + std::to_string(feature_vec[35]) + "\n");
-	if (feature_vec[36] > 0) Printer::Print("[RL MODEL]   [36] num_relations: " + std::to_string(feature_vec[36]) + "\n");
-	if (feature_vec[37] > 0) Printer::Print("[RL MODEL]   [37] log(left_denominator): " + std::to_string(feature_vec[37]) + "\n");
-	if (feature_vec[38] > 0) Printer::Print("[RL MODEL]   [38] log(right_denominator): " + std::to_string(feature_vec[38]) + "\n");
-
-	// Aggregate features (39-42)
-	if (feature_vec[39] > 0) Printer::Print("[RL MODEL]   [39] log(input_card_aggregate): " + std::to_string(feature_vec[39]) + "\n");
-	if (feature_vec[40] > 0) Printer::Print("[RL MODEL]   [40] num_group_by_cols: " + std::to_string(feature_vec[40]) + "\n");
-	if (feature_vec[41] > 0) Printer::Print("[RL MODEL]   [41] num_agg_functions: " + std::to_string(feature_vec[41]) + "\n");
-	if (feature_vec[42] > 0) Printer::Print("[RL MODEL]   [42] num_grouping_sets: " + std::to_string(feature_vec[42]) + "\n");
-
-	// Filter features (43-44)
-	if (feature_vec[43] > 0) Printer::Print("[RL MODEL]   [43] log(input_card_filter): " + std::to_string(feature_vec[43]) + "\n");
-	if (feature_vec[44] > 0) Printer::Print("[RL MODEL]   [44] num_filters: " + std::to_string(feature_vec[44]) + "\n");
-
-	// Context feature (45)
-	if (feature_vec[45] > 0) Printer::Print("[RL MODEL]   [45] log(duckdb_estimate): " + std::to_string(feature_vec[45]) + "\n");
-
-	Printer::Print("[RL MODEL] ==========================================\n");
-
-	// TODO: Feed feature_vec to ML model and get prediction
-
-	// For now, pass through DuckDB's estimate
-	// Later this will be replaced with actual RL model inference
-	Printer::Print("[RL MODEL] Returning DuckDB estimate: " + std::to_string(features.estimated_cardinality) + "\n");
-	return features.estimated_cardinality;
+	// Otherwise, use the model's prediction
+	idx_t result = static_cast<idx_t>(predicted_cardinality);
+	Printer::Print("[RL MODEL] Returning model prediction: " + std::to_string(result) + "\n");
+	return result;
 }
 
 void RLModelInterface::TrainModel(const OperatorFeatures &features, idx_t actual_cardinality) {

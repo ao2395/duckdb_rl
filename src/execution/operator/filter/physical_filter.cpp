@@ -2,12 +2,12 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/parallel/thread_context.hpp"
+
 namespace duckdb {
 
 PhysicalFilter::PhysicalFilter(PhysicalPlan &physical_plan, vector<LogicalType> types,
                                vector<unique_ptr<Expression>> select_list, idx_t estimated_cardinality)
     : CachingPhysicalOperator(physical_plan, PhysicalOperatorType::FILTER, std::move(types), estimated_cardinality) {
-
 	D_ASSERT(!select_list.empty());
 	if (select_list.size() == 1) {
 		expression = std::move(select_list[0]);

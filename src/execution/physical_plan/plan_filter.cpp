@@ -18,8 +18,10 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalFilter &op) {
 	// RL MODEL INFERENCE: After child is created, extract features and get estimate
 	RLModelInterface rl_model(context);
 	auto features = rl_model.ExtractFeatures(op, context);
+	// IMPORTANT: Use the physical child's cardinality (which may have been set by RL model),
+	// not the logical child's cardinality (which still has DuckDB's original estimate)
+	features.child_cardinality = plan.get().estimated_cardinality;
 	auto rl_estimate = rl_model.GetCardinalityEstimate(features);
-	// For now, we don't override - just print features (rl_estimate will be 0)
 	if (rl_estimate > 0) {
 		op.estimated_cardinality = rl_estimate;
 	}

@@ -40,7 +40,6 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 	RLModelInterface rl_model(context);
 	auto features = rl_model.ExtractFeatures(op, context);
 	auto rl_estimate = rl_model.GetCardinalityEstimate(features);
-	// For now, we don't override - just print features (rl_estimate will be 0)
 	if (rl_estimate > 0) {
 		op.estimated_cardinality = rl_estimate;
 	}

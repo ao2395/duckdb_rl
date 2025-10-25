@@ -56,7 +56,9 @@ unique_ptr<PhysicalPlan> PhysicalPlanGenerator::PlanInternal(LogicalOperator &op
 	}
 	op.estimated_cardinality = op.EstimateCardinality(context);
 	physical_plan->SetRoot(CreatePlan(op));
-	physical_plan->Root().estimated_cardinality = op.estimated_cardinality;
+	// IMPORTANT: Don't overwrite the physical operator's cardinality!
+	// The RL model has already set the correct cardinality during CreatePlan()
+	// physical_plan->Root().estimated_cardinality = op.estimated_cardinality;
 
 	auto debug_verify_vector = DBConfig::GetSetting<DebugVerifyVectorSetting>(context);
 	if (debug_verify_vector != DebugVectorVerification::NONE) {

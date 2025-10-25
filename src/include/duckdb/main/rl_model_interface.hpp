@@ -11,6 +11,7 @@
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/planner/logical_operator.hpp"
+#include "duckdb/main/rl_cardinality_model.hpp"
 
 namespace duckdb {
 
@@ -38,6 +39,7 @@ struct OperatorFeatures {
 	vector<string> comparison_types;
 	vector<idx_t> filter_column_ids;
 	vector<double> selectivity_ratios;
+	idx_t child_cardinality = 0;  // For FILTER operators: cardinality of child operator
 
 	// Join features
 	string join_type;
