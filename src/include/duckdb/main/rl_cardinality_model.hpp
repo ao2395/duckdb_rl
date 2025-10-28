@@ -60,10 +60,11 @@ private:
 	// Allows concurrent readers, exclusive writer
 	mutable mutex model_lock;
 
-	// Model architecture: Input(64) -> Hidden1(128) -> Hidden2(64) -> Output(1)
+	// Model architecture: Input(64) -> Hidden1(128) -> Hidden2(128) -> Hidden3(64) -> Output(1)
 	static constexpr idx_t INPUT_SIZE = 64;
 	static constexpr idx_t HIDDEN1_SIZE = 128;
-	static constexpr idx_t HIDDEN2_SIZE = 64;
+	static constexpr idx_t HIDDEN2_SIZE = 128;
+	static constexpr idx_t HIDDEN3_SIZE = 64;
 	static constexpr idx_t OUTPUT_SIZE = 1;
 
 	// Learning rate for gradient descent
@@ -72,9 +73,11 @@ private:
 	// Weight matrices and biases (protected by model_lock)
 	vector<vector<double>> weights_input_hidden1;   // 64 x 128
 	vector<double> bias_hidden1;                     // 128
-	vector<vector<double>> weights_hidden1_hidden2;  // 128 x 64
-	vector<double> bias_hidden2;                     // 64
-	vector<vector<double>> weights_hidden2_output;   // 64 x 1
+	vector<vector<double>> weights_hidden1_hidden2;  // 128 x 128
+	vector<double> bias_hidden2;                     // 128
+	vector<vector<double>> weights_hidden2_hidden3;  // 128 x 64
+	vector<double> bias_hidden3;                     // 64
+	vector<vector<double>> weights_hidden3_output;   // 64 x 1
 	vector<double> bias_output;                      // 1
 
 	// Helper functions
@@ -88,10 +91,12 @@ private:
 	// Forward and backward pass (caller must hold model_lock)
 	double ForwardPassUnlocked(const vector<double> &features,
 	                            vector<double> &hidden1_out,
-	                            vector<double> &hidden2_out) const;
+	                            vector<double> &hidden2_out,
+	                            vector<double> &hidden3_out) const;
 	void BackwardPassUnlocked(const vector<double> &features,
 	                           const vector<double> &hidden1_activations,
 	                           const vector<double> &hidden2_activations,
+	                           const vector<double> &hidden3_activations,
 	                           double error);
 };
 

@@ -25,7 +25,7 @@ struct RLTrainingConfig {
 	idx_t min_buffer_size = 50;         // Minimum samples before training starts
 	idx_t training_interval_ms = 1000;  // Training frequency (milliseconds)
 	idx_t max_iterations_per_cycle = 1; // Process each sample once (online learning)
-	double learning_rate = 0.0001;      // Learning rate for gradient descent
+	double learning_rate = 0.0003;       // Learning rate for gradient descent
 
 	RLTrainingConfig() = default;
 };

@@ -10,11 +10,11 @@ RLCardinalityModel &RLCardinalityModel::Get() {
 	return instance;
 }
 
-RLCardinalityModel::RLCardinalityModel() : initialized(false), learning_rate(0.0001) {  // Balanced learning rate
+RLCardinalityModel::RLCardinalityModel() : initialized(false), learning_rate(0.0003) {  // Higher LR for faster convergence with stable init
 	Printer::Print("[RL MODEL] Initializing singleton MLP for online RL...\n");
 	InitializeWeights();
 	initialized = true;
-	Printer::Print("[RL MODEL] MLP initialized with architecture: 64 -> 128 -> 64 -> 1, LR=0.0001, InitBias=9.21\n");
+	Printer::Print("[RL MODEL] MLP initialized with architecture: 64 -> 128 -> 128 -> 64 -> 1, LR=0.0003, InitBias=9.21\n");
 }
 
 RLCardinalityModel::~RLCardinalityModel() {
@@ -37,7 +37,7 @@ void RLCardinalityModel::InitializeWeights() {
 	}
 	bias_hidden1.resize(HIDDEN1_SIZE, 0.0);
 
-	// Initialize weights_hidden1_hidden2 (128 x 64)
+	// Initialize weights_hidden1_hidden2 (128 x 128)
 	double std_dev2 = std::sqrt(2.0 / HIDDEN1_SIZE);
 	std::normal_distribution<double> dist2(0.0, std_dev2);
 	weights_hidden1_hidden2.resize(HIDDEN2_SIZE);
@@ -49,15 +49,27 @@ void RLCardinalityModel::InitializeWeights() {
 	}
 	bias_hidden2.resize(HIDDEN2_SIZE, 0.0);
 
-	// Initialize weights_hidden2_output (64 x 1)
-	// Use very small weights for output layer to prevent initial explosion
-	double std_dev3 = 0.01;  // Much smaller than He initialization
+	// Initialize weights_hidden2_hidden3 (128 x 64)
+	double std_dev3 = std::sqrt(2.0 / HIDDEN2_SIZE);
 	std::normal_distribution<double> dist3(0.0, std_dev3);
-	weights_hidden2_output.resize(OUTPUT_SIZE);
-	for (idx_t i = 0; i < OUTPUT_SIZE; i++) {
-		weights_hidden2_output[i].resize(HIDDEN2_SIZE);
+	weights_hidden2_hidden3.resize(HIDDEN3_SIZE);
+	for (idx_t i = 0; i < HIDDEN3_SIZE; i++) {
+		weights_hidden2_hidden3[i].resize(HIDDEN2_SIZE);
 		for (idx_t j = 0; j < HIDDEN2_SIZE; j++) {
-			weights_hidden2_output[i][j] = dist3(gen);
+			weights_hidden2_hidden3[i][j] = dist3(gen);
+		}
+	}
+	bias_hidden3.resize(HIDDEN3_SIZE, 0.0);
+
+	// Initialize weights_hidden3_output (64 x 1)
+	// Use very small weights for output layer to prevent initial explosion
+	double std_dev4 = 0.01;  // Much smaller than He initialization
+	std::normal_distribution<double> dist4(0.0, std_dev4);
+	weights_hidden3_output.resize(OUTPUT_SIZE);
+	for (idx_t i = 0; i < OUTPUT_SIZE; i++) {
+		weights_hidden3_output[i].resize(HIDDEN3_SIZE);
+		for (idx_t j = 0; j < HIDDEN3_SIZE; j++) {
+			weights_hidden3_output[i][j] = dist4(gen);
 		}
 	}
 	// Initialize bias to log(10000) so model starts predicting ~10K cardinality
@@ -97,7 +109,8 @@ void RLCardinalityModel::ApplyReLU(vector<double> &vec) const {
 
 double RLCardinalityModel::ForwardPassUnlocked(const vector<double> &features,
                                                 vector<double> &hidden1_out,
-                                                vector<double> &hidden2_out) const {
+                                                vector<double> &hidden2_out,
+                                                vector<double> &hidden3_out) const {
 	// Layer 1: Input -> Hidden1
 	hidden1_out = MatrixVectorMultiply(weights_input_hidden1, features);
 	AddBias(hidden1_out, bias_hidden1);
@@ -108,8 +121,13 @@ double RLCardinalityModel::ForwardPassUnlocked(const vector<double> &features,
 	AddBias(hidden2_out, bias_hidden2);
 	ApplyReLU(hidden2_out);
 
-	// Layer 3: Hidden2 -> Output
-	auto output = MatrixVectorMultiply(weights_hidden2_output, hidden2_out);
+	// Layer 3: Hidden2 -> Hidden3
+	hidden3_out = MatrixVectorMultiply(weights_hidden2_hidden3, hidden2_out);
+	AddBias(hidden3_out, bias_hidden3);
+	ApplyReLU(hidden3_out);
+
+	// Layer 4: Hidden3 -> Output
+	auto output = MatrixVectorMultiply(weights_hidden3_output, hidden3_out);
 	AddBias(output, bias_output);
 
 	// Return predicted log(cardinality)
@@ -133,8 +151,8 @@ double RLCardinalityModel::Predict(const vector<double> &features) {
 	double log_cardinality;
 	{
 		lock_guard<mutex> lock(model_lock);
-		vector<double> hidden1_temp, hidden2_temp;
-		log_cardinality = ForwardPassUnlocked(features, hidden1_temp, hidden2_temp);
+		vector<double> hidden1_temp, hidden2_temp, hidden3_temp;
+		log_cardinality = ForwardPassUnlocked(features, hidden1_temp, hidden2_temp, hidden3_temp);
 	}
 
 	// Clamp log prediction to reasonable range BEFORE exp to prevent overflow
@@ -157,6 +175,7 @@ double RLCardinalityModel::Predict(const vector<double> &features) {
 void RLCardinalityModel::BackwardPassUnlocked(const vector<double> &features,
                                                const vector<double> &hidden1_activations,
                                                const vector<double> &hidden2_activations,
+                                               const vector<double> &hidden3_activations,
                                                double error) {
 	// Compute gradients using backpropagation
 	// Loss = MSE on log(cardinality), so error = predicted_log - actual_log
@@ -172,23 +191,44 @@ void RLCardinalityModel::BackwardPassUnlocked(const vector<double> &features,
 	// Gradient clipping threshold
 	const double GRAD_CLIP = 10.0;
 
-	// Hidden2 -> Output weight gradients
+	// Hidden3 -> Output weight gradients
 	for (idx_t i = 0; i < OUTPUT_SIZE; i++) {
-		for (idx_t j = 0; j < HIDDEN2_SIZE; j++) {
-			double grad = output_grad[i] * hidden2_activations[j];
+		for (idx_t j = 0; j < HIDDEN3_SIZE; j++) {
+			double grad = output_grad[i] * hidden3_activations[j];
 			grad = std::max(-GRAD_CLIP, std::min(GRAD_CLIP, grad));  // Clip gradient
-			weights_hidden2_output[i][j] -= learning_rate * grad;
+			weights_hidden3_output[i][j] -= learning_rate * grad;
 		}
 		double bias_grad = output_grad[i];
 		bias_grad = std::max(-GRAD_CLIP, std::min(GRAD_CLIP, bias_grad));
 		bias_output[i] -= learning_rate * bias_grad;
 	}
 
+	// Backpropagate to hidden3
+	vector<double> hidden3_grad(HIDDEN3_SIZE, 0.0);
+	for (idx_t j = 0; j < HIDDEN3_SIZE; j++) {
+		for (idx_t i = 0; i < OUTPUT_SIZE; i++) {
+			hidden3_grad[j] += output_grad[i] * weights_hidden3_output[i][j];
+		}
+		hidden3_grad[j] *= ReLUDerivative(hidden3_activations[j]);
+	}
+
+	// Hidden2 -> Hidden3 weight gradients
+	for (idx_t i = 0; i < HIDDEN3_SIZE; i++) {
+		for (idx_t j = 0; j < HIDDEN2_SIZE; j++) {
+			double grad = hidden3_grad[i] * hidden2_activations[j];
+			grad = std::max(-GRAD_CLIP, std::min(GRAD_CLIP, grad));
+			weights_hidden2_hidden3[i][j] -= learning_rate * grad;
+		}
+		double bias_grad = hidden3_grad[i];
+		bias_grad = std::max(-GRAD_CLIP, std::min(GRAD_CLIP, bias_grad));
+		bias_hidden3[i] -= learning_rate * bias_grad;
+	}
+
 	// Backpropagate to hidden2
 	vector<double> hidden2_grad(HIDDEN2_SIZE, 0.0);
 	for (idx_t j = 0; j < HIDDEN2_SIZE; j++) {
-		for (idx_t i = 0; i < OUTPUT_SIZE; i++) {
-			hidden2_grad[j] += output_grad[i] * weights_hidden2_output[i][j];
+		for (idx_t i = 0; i < HIDDEN3_SIZE; i++) {
+			hidden2_grad[j] += hidden3_grad[i] * weights_hidden2_hidden3[i][j];
 		}
 		hidden2_grad[j] *= ReLUDerivative(hidden2_activations[j]);
 	}
@@ -252,11 +292,11 @@ void RLCardinalityModel::Update(const vector<double> &features, idx_t actual_car
 	lock_guard<mutex> lock(model_lock);
 
 	// Need to do forward pass to get activations for backprop
-	vector<double> hidden1_temp, hidden2_temp;
-	ForwardPassUnlocked(features, hidden1_temp, hidden2_temp);
+	vector<double> hidden1_temp, hidden2_temp, hidden3_temp;
+	ForwardPassUnlocked(features, hidden1_temp, hidden2_temp, hidden3_temp);
 
 	// Now do backprop with the activations
-	BackwardPassUnlocked(features, hidden1_temp, hidden2_temp, error);
+	BackwardPassUnlocked(features, hidden1_temp, hidden2_temp, hidden3_temp, error);
 }
 
 void RLCardinalityModel::SaveWeights(const string &model_path) {
