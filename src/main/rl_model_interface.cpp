@@ -297,31 +297,71 @@ vector<double> RLModelInterface::FeaturesToVector(const OperatorFeatures &featur
 	}
 	idx += 10;
 
-	// 2. TABLE SCAN FEATURES - 8 features
+	// 2. TABLE SCAN FEATURES - 24 features
 	if (!features.table_name.empty()) {
+		// Table identifier - use hash normalized to [0,1] for better neural network training
+		std::hash<std::string> hasher;
+		double table_hash = static_cast<double>(hasher(features.table_name) % 10000) / 10000.0;
+		feature_vec[idx++] = table_hash;
+
 		feature_vec[idx++] = safe_log(features.base_table_cardinality);
 		feature_vec[idx++] = static_cast<double>(features.num_table_filters);
 		feature_vec[idx++] = features.filter_selectivity;
 		feature_vec[idx++] = features.used_default_selectivity ? 1.0 : 0.0;
 		feature_vec[idx++] = static_cast<double>(features.filter_types.size());
 
+		// Number of columns in the table
+		feature_vec[idx++] = static_cast<double>(features.column_distinct_counts.size());
+
 		// Column distinct count statistics
 		if (!features.column_distinct_counts.empty() && features.base_table_cardinality > 0) {
 			double sum = 0.0, min_ratio = 1.0, max_ratio = 0.0;
+			double sum_log = 0.0;
+			idx_t min_distinct = features.base_table_cardinality, max_distinct = 0;
+			idx_t num_high_card_cols = 0;  // Columns with >50% distinct values
+			idx_t num_low_card_cols = 0;   // Columns with <5% distinct values
+
 			for (const auto &entry : features.column_distinct_counts) {
 				double ratio = static_cast<double>(entry.second) / static_cast<double>(features.base_table_cardinality);
 				sum += ratio;
+				sum_log += std::log(std::max(1.0, static_cast<double>(entry.second)));
 				min_ratio = std::min(min_ratio, ratio);
 				max_ratio = std::max(max_ratio, ratio);
+				min_distinct = std::min(min_distinct, entry.second);
+				max_distinct = std::max(max_distinct, entry.second);
+				if (ratio > 0.5) num_high_card_cols++;
+				if (ratio < 0.05) num_low_card_cols++;
 			}
 			feature_vec[idx++] = sum / features.column_distinct_counts.size(); // avg ratio
 			feature_vec[idx++] = max_ratio;
 			feature_vec[idx++] = min_ratio;
+			feature_vec[idx++] = sum_log / features.column_distinct_counts.size(); // avg log(distinct_count)
+			feature_vec[idx++] = static_cast<double>(num_high_card_cols);
+			feature_vec[idx++] = static_cast<double>(num_low_card_cols);
+			feature_vec[idx++] = safe_log(min_distinct); // log of minimum distinct count - KEY DISTINGUISHER!
+			feature_vec[idx++] = safe_log(max_distinct); // log of maximum distinct count
 		} else {
-			idx += 3;
+			idx += 8;
 		}
+
+		// Filter comparison types one-hot (EQUAL, LT, GT, LTE, GTE, NEQ) - 6 features
+		bool has_equal = false, has_lt = false, has_gt = false, has_lte = false, has_gte = false, has_neq = false;
+		for (const auto &comp_type : features.comparison_types) {
+			if (comp_type == "EQUAL") has_equal = true;
+			else if (comp_type == "LESSTHAN") has_lt = true;
+			else if (comp_type == "GREATERTHAN") has_gt = true;
+			else if (comp_type == "LESSTHANOREQUALTO") has_lte = true;
+			else if (comp_type == "GREATERTHANOREQUALTO") has_gte = true;
+			else if (comp_type == "NOTEQUAL") has_neq = true;
+		}
+		feature_vec[idx++] = has_equal ? 1.0 : 0.0;
+		feature_vec[idx++] = has_lt ? 1.0 : 0.0;
+		feature_vec[idx++] = has_gt ? 1.0 : 0.0;
+		feature_vec[idx++] = has_lte ? 1.0 : 0.0;
+		feature_vec[idx++] = has_gte ? 1.0 : 0.0;
+		feature_vec[idx++] = has_neq ? 1.0 : 0.0;
 	} else {
-		idx += 8;
+		idx += 24;
 	}
 
 	// 3. JOIN FEATURES - 21 features
