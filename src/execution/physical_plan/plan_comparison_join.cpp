@@ -36,15 +36,19 @@ PhysicalOperator &PhysicalPlanGenerator::PlanComparisonJoin(LogicalComparisonJoi
 	// This ensures we have the RL model's estimates for children available
 	RLModelInterface rl_model(context);
 	auto features = rl_model.ExtractFeatures(op, context);
+	idx_t original_duckdb_estimate = op.estimated_cardinality;  // For debugging/comparison only
 	auto rl_estimate = rl_model.GetCardinalityEstimate(features);
-	// For now, we don't override - just print features (rl_estimate will be 0)
 	if (rl_estimate > 0) {
 		op.estimated_cardinality = rl_estimate;
 	}
 
 	if (op.conditions.empty()) {
 		// no conditions: insert a cross product
-		return Make<PhysicalCrossProduct>(op.types, left, right, op.estimated_cardinality);
+		auto &cross_product = Make<PhysicalCrossProduct>(op.types, left, right, op.estimated_cardinality);
+		if (rl_estimate > 0) {
+			rl_model.AttachRLState(cross_product, features, rl_estimate, original_duckdb_estimate);
+		}
+		return cross_product;
 	}
 
 	idx_t has_range = 0;
@@ -72,6 +76,9 @@ PhysicalOperator &PhysicalPlanGenerator::PlanComparisonJoin(LogicalComparisonJoi
 		                                    op.left_projection_map, op.right_projection_map, std::move(op.mark_types),
 		                                    op.estimated_cardinality, std::move(op.filter_pushdown));
 		join.Cast<PhysicalHashJoin>().join_stats = std::move(op.join_stats);
+		if (rl_estimate > 0) {
+			rl_model.AttachRLState(join, features, rl_estimate, original_duckdb_estimate);
+		}
 		return join;
 	}
 
@@ -91,25 +98,41 @@ PhysicalOperator &PhysicalPlanGenerator::PlanComparisonJoin(LogicalComparisonJoi
 	}
 
 	if (can_iejoin) {
-		return Make<PhysicalIEJoin>(op, left, right, std::move(op.conditions), op.join_type, op.estimated_cardinality,
-		                            std::move(op.filter_pushdown));
+		auto &iejoin = Make<PhysicalIEJoin>(op, left, right, std::move(op.conditions), op.join_type, op.estimated_cardinality,
+		                                    std::move(op.filter_pushdown));
+		if (rl_estimate > 0) {
+			rl_model.AttachRLState(iejoin, features, rl_estimate, original_duckdb_estimate);
+		}
+		return iejoin;
 	}
 	if (can_merge) {
 		// range join: use piecewise merge join
-		return Make<PhysicalPiecewiseMergeJoin>(op, left, right, std::move(op.conditions), op.join_type,
-		                                        op.estimated_cardinality, std::move(op.filter_pushdown));
+		auto &merge_join = Make<PhysicalPiecewiseMergeJoin>(op, left, right, std::move(op.conditions), op.join_type,
+		                                                    op.estimated_cardinality, std::move(op.filter_pushdown));
+		if (rl_estimate > 0) {
+			rl_model.AttachRLState(merge_join, features, rl_estimate, original_duckdb_estimate);
+		}
+		return merge_join;
 	}
 	if (PhysicalNestedLoopJoin::IsSupported(op.conditions, op.join_type)) {
 		// inequality join: use nested loop
-		return Make<PhysicalNestedLoopJoin>(op, left, right, std::move(op.conditions), op.join_type,
-		                                    op.estimated_cardinality, std::move(op.filter_pushdown));
+		auto &nl_join = Make<PhysicalNestedLoopJoin>(op, left, right, std::move(op.conditions), op.join_type,
+		                                             op.estimated_cardinality, std::move(op.filter_pushdown));
+		if (rl_estimate > 0) {
+			rl_model.AttachRLState(nl_join, features, rl_estimate, original_duckdb_estimate);
+		}
+		return nl_join;
 	}
 
 	for (auto &cond : op.conditions) {
 		RewriteJoinCondition(cond.right, left.types.size());
 	}
 	auto condition = JoinCondition::CreateExpression(std::move(op.conditions));
-	return Make<PhysicalBlockwiseNLJoin>(op, left, right, std::move(condition), op.join_type, op.estimated_cardinality);
+	auto &blockwise_join = Make<PhysicalBlockwiseNLJoin>(op, left, right, std::move(condition), op.join_type, op.estimated_cardinality);
+	if (rl_estimate > 0) {
+		rl_model.AttachRLState(blockwise_join, features, rl_estimate, original_duckdb_estimate);
+	}
+	return blockwise_join;
 }
 
 PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalComparisonJoin &op) {

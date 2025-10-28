@@ -51,6 +51,8 @@
 #include "duckdb/logging/log_type.hpp"
 #include "duckdb/logging/log_manager.hpp"
 #include "duckdb/main/settings.hpp"
+#include "duckdb/main/rl_model_interface.hpp"
+#include "duckdb/main/rl_training_buffer.hpp"
 
 namespace duckdb {
 
@@ -338,6 +340,20 @@ unique_ptr<QueryResult> ClientContext::FetchResultInternal(ClientContextLock &lo
 	D_ASSERT(executor.HasResultCollector());
 	// we have a result collector - fetch the result directly from the result collector
 	result = executor.GetResult();
+
+	// RL TRAINING: Collect actual cardinalities from executed operators
+	auto physical_plan = executor.GetPhysicalPlan();
+	auto profiler = executor.GetProfiler();
+	if (physical_plan && profiler) {
+		try {
+			auto &training_buffer = db->GetRLTrainingBuffer();
+			RLModelInterface rl_interface(*this);
+			rl_interface.CollectActualCardinalities(*physical_plan, *profiler, training_buffer);
+		} catch (...) {
+			// Silently ignore errors in RL training collection
+		}
+	}
+
 	if (!create_stream_result) {
 		CleanupInternal(lock, result.get(), false);
 	} else {

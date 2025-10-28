@@ -21,6 +21,7 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalFilter &op) {
 	// IMPORTANT: Use the physical child's cardinality (which may have been set by RL model),
 	// not the logical child's cardinality (which still has DuckDB's original estimate)
 	features.child_cardinality = plan.get().estimated_cardinality;
+	idx_t original_duckdb_estimate = op.estimated_cardinality;  // For debugging/comparison only
 	auto rl_estimate = rl_model.GetCardinalityEstimate(features);
 	if (rl_estimate > 0) {
 		op.estimated_cardinality = rl_estimate;
@@ -31,6 +32,12 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalFilter &op) {
 		// create a filter if there is anything to filter
 		auto &filter = Make<PhysicalFilter>(plan.get().GetTypes(), std::move(op.expressions), op.estimated_cardinality);
 		filter.children.push_back(plan);
+
+		// Attach RL state to track prediction for training
+		if (rl_estimate > 0) {
+			rl_model.AttachRLState(filter, features, rl_estimate, original_duckdb_estimate);
+		}
+
 		plan = filter;
 	}
 	if (op.HasProjectionMap()) {

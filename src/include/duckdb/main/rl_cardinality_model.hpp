@@ -10,6 +10,7 @@
 
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/vector.hpp"
+#include "duckdb/common/mutex.hpp"
 
 namespace duckdb {
 
@@ -49,8 +50,15 @@ public:
 		return initialized;
 	}
 
+	//! Reset model weights to initial state (in case of instability)
+	void ResetWeights();
+
 private:
 	bool initialized;
+
+	// Thread safety: Separate locks for read (inference) and write (training)
+	// Allows concurrent readers, exclusive writer
+	mutable mutex model_lock;
 
 	// Model architecture: Input(64) -> Hidden1(128) -> Hidden2(64) -> Output(1)
 	static constexpr idx_t INPUT_SIZE = 64;
@@ -61,18 +69,13 @@ private:
 	// Learning rate for gradient descent
 	double learning_rate;
 
-	// Weight matrices and biases
+	// Weight matrices and biases (protected by model_lock)
 	vector<vector<double>> weights_input_hidden1;   // 64 x 128
 	vector<double> bias_hidden1;                     // 128
 	vector<vector<double>> weights_hidden1_hidden2;  // 128 x 64
 	vector<double> bias_hidden2;                     // 64
 	vector<vector<double>> weights_hidden2_output;   // 64 x 1
 	vector<double> bias_output;                      // 1
-
-	// Activations (stored during forward pass for backprop)
-	vector<double> hidden1_activations;
-	vector<double> hidden2_activations;
-	double output_activation;
 
 	// Helper functions
 	void InitializeWeights();
@@ -82,9 +85,14 @@ private:
 	void AddBias(vector<double> &vec, const vector<double> &bias) const;
 	void ApplyReLU(vector<double> &vec) const;
 
-	// Forward and backward pass
-	double ForwardPass(const vector<double> &features);
-	void BackwardPass(const vector<double> &features, double error);
+	// Forward and backward pass (caller must hold model_lock)
+	double ForwardPassUnlocked(const vector<double> &features,
+	                            vector<double> &hidden1_out,
+	                            vector<double> &hidden2_out) const;
+	void BackwardPassUnlocked(const vector<double> &features,
+	                           const vector<double> &hidden1_activations,
+	                           const vector<double> &hidden2_activations,
+	                           double error);
 };
 
 } // namespace duckdb

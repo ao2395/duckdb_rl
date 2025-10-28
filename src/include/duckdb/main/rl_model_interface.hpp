@@ -15,7 +15,10 @@
 
 namespace duckdb {
 
+class PhysicalOperator;
 class ClientContext;
+class QueryProfiler;
+class RLTrainingBuffer;
 
 //! Feature set for a single operator
 struct OperatorFeatures {
@@ -79,6 +82,11 @@ public:
 	//! Returns 0 if model should not override DuckDB's estimate
 	idx_t GetCardinalityEstimate(const OperatorFeatures &features);
 
+	//! Create RL state and attach to physical operator
+	//! This stores the feature vector and prediction for later training
+	void AttachRLState(PhysicalOperator &physical_op, const OperatorFeatures &features, idx_t rl_prediction,
+	                    idx_t duckdb_estimate);
+
 	//! Convert features to numerical vector for ML model input
 	//! Returns a fixed-size vector of doubles suitable for feeding to an ML model
 	vector<double> FeaturesToVector(const OperatorFeatures &features);
@@ -86,9 +94,18 @@ public:
 	//! Train the model with actual cardinality (to be implemented later)
 	void TrainModel(const OperatorFeatures &features, idx_t actual_cardinality);
 
+	//! Collect actual cardinalities from executed operators and add to training buffer
+	//! This should be called after query execution completes
+	void CollectActualCardinalities(PhysicalOperator &root_operator, class QueryProfiler &profiler,
+	                                 RLTrainingBuffer &buffer);
+
 private:
 	ClientContext &context;
 	bool enabled;
+
+	//! Helper function to recursively collect cardinalities
+	void CollectActualCardinalitiesRecursive(PhysicalOperator &op, class QueryProfiler &profiler,
+	                                          RLTrainingBuffer &buffer);
 
 	// Feature vector size:
 	// - Operator type (10 one-hot)

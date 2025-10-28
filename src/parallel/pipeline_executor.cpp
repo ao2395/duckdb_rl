@@ -568,6 +568,11 @@ void PipelineExecutor::EndOperator(PhysicalOperator &op, optional_ptr<DataChunk>
 		tracker->EndOperator(&op, chunk->size());
 	}
 
+	// RL TRAINING: Track actual cardinality for operators with RL state
+	if (chunk && op.rl_state && op.rl_state->has_rl_prediction) {
+		op.rl_state->AddRows(chunk->size());
+	}
+
 	if (chunk) {
 		chunk->Verify();
 	}

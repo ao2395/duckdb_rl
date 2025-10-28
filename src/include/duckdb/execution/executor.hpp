@@ -106,6 +106,16 @@ public:
 	//! Returns the query result - can only be used if `HasResultCollector` returns true
 	unique_ptr<QueryResult> GetResult();
 
+	//! Get the physical plan root operator (for RL training)
+	optional_ptr<PhysicalOperator> GetPhysicalPlan() {
+		return physical_plan;
+	}
+
+	//! Get the query profiler (for RL training)
+	optional_ptr<QueryProfiler> GetProfiler() {
+		return profiler.get();
+	}
+
 	//! Returns true if all pipelines have been completed
 	bool ExecutionIsFinished();
 

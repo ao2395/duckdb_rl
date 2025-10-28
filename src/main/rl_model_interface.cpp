@@ -17,6 +17,12 @@
 #include "duckdb/planner/operator/logical_comparison_join.hpp"
 #include "duckdb/planner/operator/logical_any_join.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
+#include "duckdb/main/query_profiler.hpp"
+#include "duckdb/main/rl_training_buffer.hpp"
+#include "duckdb/execution/physical_operator.hpp"
+#include "duckdb/main/profiling_node.hpp"
+#include "duckdb/common/enums/metric_type.hpp"
+#include "duckdb/execution/operator/helper/physical_result_collector.hpp"
 
 namespace duckdb {
 
@@ -408,6 +414,84 @@ idx_t RLModelInterface::GetCardinalityEstimate(const OperatorFeatures &features)
 void RLModelInterface::TrainModel(const OperatorFeatures &features, idx_t actual_cardinality) {
 	// To be implemented later for training
 	// This will be called after each operator executes with the actual cardinality
+}
+
+void RLModelInterface::AttachRLState(PhysicalOperator &physical_op, const OperatorFeatures &features,
+                                      idx_t rl_prediction, idx_t duckdb_estimate) {
+	if (!enabled) {
+		return;
+	}
+
+	// Convert features to vector
+	auto feature_vec = FeaturesToVector(features);
+
+	// Create and attach RL state
+	physical_op.rl_state = make_uniq<RLOperatorState>(std::move(feature_vec), rl_prediction, duckdb_estimate);
+
+	Printer::Print("[RL MODEL] Attached RL state to operator: RL=" + std::to_string(rl_prediction) + ", DuckDB=" +
+	               std::to_string(duckdb_estimate) + "\n");
+}
+
+void RLModelInterface::CollectActualCardinalities(PhysicalOperator &root_operator,
+                                                   QueryProfiler &profiler,
+                                                   RLTrainingBuffer &buffer) {
+	if (!enabled) {
+		return;
+	}
+
+	Printer::Print("[RL TRAINING] Starting collection of actual cardinalities...\n");
+
+	// If root is a RESULT_COLLECTOR, we need to get the actual plan from it
+	PhysicalOperator *actual_root = &root_operator;
+	if (root_operator.type == PhysicalOperatorType::RESULT_COLLECTOR) {
+		auto &result_collector = root_operator.Cast<PhysicalResultCollector>();
+		actual_root = &result_collector.plan;
+		Printer::Print("[RL TRAINING] Root is RESULT_COLLECTOR, traversing actual plan\n");
+	}
+
+	// Recursively traverse the physical operator tree
+	CollectActualCardinalitiesRecursive(*actual_root, profiler, buffer);
+	Printer::Print("[RL TRAINING] Finished collecting actual cardinalities\n");
+}
+
+void RLModelInterface::CollectActualCardinalitiesRecursive(PhysicalOperator &op,
+                                                             QueryProfiler &profiler,
+                                                             RLTrainingBuffer &buffer) {
+	// Check if this operator has RL state attached
+	if (op.rl_state && op.rl_state->has_rl_prediction) {
+		// Get the actual cardinality that was tracked during execution
+		idx_t actual_cardinality = op.rl_state->GetActualCardinality();
+
+		// Only train if we actually have data
+		if (actual_cardinality > 0 || op.rl_state->rl_predicted_cardinality > 0) {
+			// Mark as collected
+			op.rl_state->has_actual_cardinality = true;
+
+			// SYNCHRONOUS TRAINING: Train immediately on this sample
+			// This prevents temporal mismatch where predictions are stale
+			auto &model = RLCardinalityModel::Get();
+			model.Update(op.rl_state->feature_vector,
+			             actual_cardinality,
+			             op.rl_state->rl_predicted_cardinality);
+
+			// Also add to buffer for monitoring/statistics
+			buffer.AddSample(op.rl_state->feature_vector,
+			                 actual_cardinality,
+			                 op.rl_state->rl_predicted_cardinality);
+
+			// Simplified logging - just show what was collected
+			Printer::Print("[RL TRAINING] " + op.GetName() + ": Actual=" +
+			               std::to_string(actual_cardinality) + ", Pred=" +
+			               std::to_string(op.rl_state->rl_predicted_cardinality) + ", Q-err=" +
+			               std::to_string(std::max(actual_cardinality / (double)std::max(op.rl_state->rl_predicted_cardinality, (idx_t)1),
+			                                       op.rl_state->rl_predicted_cardinality / (double)std::max(actual_cardinality, (idx_t)1))) + "\n");
+		}
+	}
+
+	// Recursively process children
+	for (auto &child : op.children) {
+		CollectActualCardinalitiesRecursive(child.get(), profiler, buffer);
+	}
 }
 
 } // namespace duckdb

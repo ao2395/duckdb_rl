@@ -40,6 +40,7 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 	RLModelInterface rl_model(context);
 	auto features = rl_model.ExtractFeatures(op, context);
 	auto rl_estimate = rl_model.GetCardinalityEstimate(features);
+	idx_t original_duckdb_estimate = op.estimated_cardinality;  // For debugging/comparison only
 	if (rl_estimate > 0) {
 		op.estimated_cardinality = rl_estimate;
 	}
@@ -154,6 +155,12 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 		    op.returned_types, op.function, std::move(op.bind_data), op.returned_types, column_ids, vector<column_t>(),
 		    op.names, std::move(table_filters), op.estimated_cardinality, std::move(op.extra_info),
 		    std::move(op.parameters), std::move(op.virtual_columns));
+
+		// Attach RL state to track prediction for training
+		if (rl_estimate > 0) {
+			rl_model.AttachRLState(table_scan, features, rl_estimate, original_duckdb_estimate);
+		}
+
 		// first check if an additional projection is necessary
 		if (column_ids.size() == op.returned_types.size()) {
 			bool projection_necessary = false;
@@ -202,6 +209,12 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 	                            std::move(op.extra_info), std::move(op.parameters), std::move(op.virtual_columns));
 	auto &cast_table_scan = table_scan.Cast<PhysicalTableScan>();
 	cast_table_scan.dynamic_filters = op.dynamic_filters;
+
+	// Attach RL state to track prediction for training
+	if (rl_estimate > 0) {
+		rl_model.AttachRLState(table_scan, features, rl_estimate, original_duckdb_estimate);
+	}
+
 	if (filter) {
 		filter->children.push_back(table_scan);
 		return *filter;

@@ -48,6 +48,8 @@ add_library_unity(
   rl_feature_tracker.cpp
   rl_model_interface.cpp
   rl_cardinality_model.cpp
+  rl_training_buffer.cpp
+  rl_training_thread.cpp
   stream_query_result.cpp
   valid_checker.cpp)
 set(ALL_OBJECT_FILES

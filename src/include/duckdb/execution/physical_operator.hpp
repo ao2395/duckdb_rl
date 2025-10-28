@@ -23,6 +23,7 @@
 #include "duckdb/execution/physical_operator_states.hpp"
 #include "duckdb/execution/progress_data.hpp"
 #include "duckdb/optimizer/join_order/join_node.hpp"
+#include "duckdb/execution/rl_operator_state.hpp"
 
 namespace duckdb {
 
@@ -64,6 +65,9 @@ public:
 	unique_ptr<GlobalOperatorState> op_state;
 	//! Lock for (re)setting any of the operator states.
 	mutex lock;
+
+	//! RL operator state: stores feature vector and prediction for training
+	unique_ptr<RLOperatorState> rl_state;
 
 public:
 	virtual string GetName() const;

@@ -15,6 +15,8 @@
 #include "duckdb/main/valid_checker.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/main/extension_manager.hpp"
+#include "duckdb/main/rl_training_buffer.hpp"
+#include "duckdb/main/rl_training_thread.hpp"
 
 namespace duckdb {
 class BufferManager;
@@ -74,6 +76,11 @@ public:
 	shared_ptr<AttachedDatabase> CreateAttachedDatabase(ClientContext &context, AttachInfo &info,
 	                                                    AttachOptions &options);
 
+	//! Get RL training buffer (for adding training samples)
+	DUCKDB_API RLTrainingBuffer &GetRLTrainingBuffer();
+	//! Get RL training thread (for monitoring/control)
+	DUCKDB_API RLTrainingThread &GetRLTrainingThread();
+
 private:
 	void Initialize(const char *path, DBConfig *config);
 	void LoadExtensionSettings();
@@ -92,6 +99,10 @@ private:
 	unique_ptr<DatabaseFileSystem> db_file_system;
 	shared_ptr<LogManager> log_manager;
 	unique_ptr<ExternalFileCache> external_file_cache;
+
+	// RL training infrastructure
+	unique_ptr<RLTrainingBuffer> rl_training_buffer;
+	unique_ptr<RLTrainingThread> rl_training_thread;
 
 	duckdb_ext_api_v1 (*create_api_v1)();
 };

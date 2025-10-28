@@ -2,6 +2,9 @@
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/virtual_file_system.hpp"
+#include "duckdb/main/rl_cardinality_model.hpp"
+#include "duckdb/main/rl_training_buffer.hpp"
+#include "duckdb/main/rl_training_thread.hpp"
 #include "duckdb/execution/index/index_type_set.hpp"
 #include "duckdb/execution/operator/helper/physical_set.hpp"
 #include "duckdb/function/cast/cast_function_set.hpp"
@@ -70,9 +73,30 @@ DBConfig::~DBConfig() {
 DatabaseInstance::DatabaseInstance() : db_validity(*this) {
 	config.is_user_config = false;
 	create_api_v1 = nullptr;
+
+	// Initialize RL training infrastructure
+	rl_training_buffer = make_uniq<RLTrainingBuffer>(10000);  // 10K sample capacity
+	rl_training_thread = make_uniq<RLTrainingThread>(RLCardinalityModel::Get(), *rl_training_buffer);
+
+	// Background training thread disabled - using synchronous training instead
+	// Training now happens immediately after each query in CollectActualCardinalities()
+	// This prevents temporal mismatch and overfitting on stale buffer samples
+	/*
+	RLTrainingConfig training_config;
+	training_config.batch_size = 32;
+	training_config.min_buffer_size = 50;
+	training_config.training_interval_ms = 1000;
+	training_config.max_iterations_per_cycle = 1;
+	rl_training_thread->Start(training_config);
+	*/
 }
 
 DatabaseInstance::~DatabaseInstance() {
+	// Stop RL training thread first
+	if (rl_training_thread) {
+		rl_training_thread->Stop();
+	}
+
 	// destroy all attached databases
 	if (db_manager) {
 		db_manager->ResetDatabases(scheduler);
@@ -87,6 +111,10 @@ DatabaseInstance::~DatabaseInstance() {
 	log_manager.reset();
 
 	external_file_cache.reset();
+
+	// Clean up RL training infrastructure
+	rl_training_thread.reset();
+	rl_training_buffer.reset();
 
 	buffer_manager.reset();
 
@@ -528,6 +556,16 @@ LogManager &DatabaseInstance::GetLogManager() const {
 
 ValidChecker &ValidChecker::Get(DatabaseInstance &db) {
 	return db.GetValidChecker();
+}
+
+RLTrainingBuffer &DatabaseInstance::GetRLTrainingBuffer() {
+	D_ASSERT(rl_training_buffer);
+	return *rl_training_buffer;
+}
+
+RLTrainingThread &DatabaseInstance::GetRLTrainingThread() {
+	D_ASSERT(rl_training_thread);
+	return *rl_training_thread;
 }
 
 } // namespace duckdb

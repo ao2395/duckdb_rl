@@ -13,8 +13,8 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalProjection &op) {
 	// RL MODEL INFERENCE: After child is created, extract features and get estimate
 	RLModelInterface rl_model(context);
 	auto features = rl_model.ExtractFeatures(op, context);
+	idx_t original_duckdb_estimate = op.estimated_cardinality;
 	auto rl_estimate = rl_model.GetCardinalityEstimate(features);
-	// For now, we don't override - just print features (rl_estimate will be 0)
 	if (rl_estimate > 0) {
 		op.estimated_cardinality = rl_estimate;
 	}
@@ -48,6 +48,9 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalProjection &op) {
 
 	auto &proj = Make<PhysicalProjection>(op.types, std::move(op.expressions), op.estimated_cardinality);
 	proj.children.push_back(plan);
+	if (rl_estimate > 0) {
+		rl_model.AttachRLState(proj, features, rl_estimate, original_duckdb_estimate);
+	}
 	return proj;
 }
 
